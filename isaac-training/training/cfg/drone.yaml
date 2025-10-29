@@ -1,0 +1,16 @@
+drone:  
+  model_name: "hummingbird"
+
+  # ==================== whole-body parameters ====================
+  marker:
+    enable: true            # whether to attach a marker at drone center
+    shape: "cuboid_1"       # obj file name
+  
+  # ==================== whole-body ====================
+
+sensor:
+  lidar_range: 4.
+  lidar_vfov: [-10, 20.] # degreeubun
+  lidar_vbeams: 4 # number of  vertical beams
+  lidar_hres: 10. # degree
+  

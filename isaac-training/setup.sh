@@ -4,7 +4,7 @@
 set -e
 
 # Define environment name
-ENV_NAME="NavRL"
+ENV_NAME="NavRLWB"
 
 # Load Conda environment handling
 eval "$(conda shell.bash hook)"

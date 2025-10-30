@@ -216,11 +216,11 @@ class MultirotorBase(RobotBase):
         color = tuple(map(float, getattr(self.cfg, "center_marker_color", (1.0, 0.0, 0.0))))
 
         # Load OBJ file
-        obj_folder = "/home/ubuntu/SCAR/NavRL-WholeBody/isaac-training/training/obj"
+        obj_folder = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "..", "training", "obj")
         obj_file = os.path.join(obj_folder, f"{shape}.obj")
         
         if not os.path.exists(obj_file):
-            logging.warning(f"OBJ file not found: {obj_file}, skipping marker creation")
+            print(f"OBJ file not found: {obj_file}, skipping marker creation")
             return
         
         # Parse OBJ file
@@ -240,7 +240,7 @@ class MultirotorBase(RobotBase):
                     faces.append(face)
         
         if not vertices or not faces:
-            logging.warning(f"Invalid OBJ file: {obj_file}, no vertices or faces found")
+            print(f"Invalid OBJ file: {obj_file}, no vertices or faces found")
             return
 
         # Create mesh for each base_link
@@ -273,8 +273,8 @@ class MultirotorBase(RobotBase):
             # Set to be visualization only (no collision)
             prim = mesh_prim.GetPrim()
             prim.SetMetadata('kind', 'component')
-            
-            logging.info(f"Created precise mesh marker from {obj_file} at {marker_path}")
+
+            print(f"Created precise mesh marker from {obj_file} at {marker_path}")
     # ==================== whole-body visualization marker ====================
 
     def setup_randomization(self, cfg):

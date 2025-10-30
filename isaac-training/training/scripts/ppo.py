@@ -96,6 +96,11 @@ class PPO(TensorDictModuleBase):
             base_local = actions[..., :3]
             yaw_local = actions[..., 3:4]
             base_world = vec_to_world(base_local, tensordict["agents", "observation", "direction"])
+            # Ensure both tensors have the same number of dimensions
+            if base_world.dim() == 3 and yaw_local.dim() == 2:
+                yaw_local = yaw_local.unsqueeze(-1)  # Add dimension to match base_world
+            elif base_world.dim() == 2 and yaw_local.dim() == 3:
+                base_world = base_world.unsqueeze(-1)  # Add dimension to match yaw_local
             actions_world = torch.cat([base_world, yaw_local], dim=-1)
         else:
             actions_world = vec_to_world(actions, tensordict["agents", "observation", "direction"])

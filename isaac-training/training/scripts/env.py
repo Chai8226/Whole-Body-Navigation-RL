@@ -68,7 +68,7 @@ class NavigationEnv(IsaacEnv):
         # ==================== whole-body shape scan ====================
         # Compute robot shape scan: distance from center to surface along each ray
         self.shape_scan = self._compute_shape_scan(cfg.drone.marker.shape)
-        logging.info(f"Computed shape_scan with shape: {self.shape_scan.shape}")
+        print(f"Computed shape_scan with shape: {self.shape_scan.shape}")
         # ==================== whole-body shape scan ====================
 
         # start and target
@@ -97,11 +97,11 @@ class NavigationEnv(IsaacEnv):
         Returns:
             torch.Tensor: Shape scan with dimensions (1, lidar_hbeams, lidar_vbeams)
         """
-        obj_folder = "/home/ubuntu/SCAR/NavRL-WholeBody/isaac-training/training/obj"
+        obj_folder = os.path.join(os.path.dirname(__file__), "..", "obj")
         obj_file = os.path.join(obj_folder, f"{shape_name}.obj")
         
         if not os.path.exists(obj_file):
-            logging.warning(f"OBJ file not found: {obj_file}, using zero shape scan")
+            print(f"OBJ file not found: {obj_file}, using zero shape scan")
             return torch.zeros(1, self.lidar_hbeams, self.lidar_vbeams, device=self.device)
         
         # Parse OBJ file to get vertices and faces
@@ -119,7 +119,7 @@ class NavigationEnv(IsaacEnv):
                     faces.append(face)
         
         if not vertices or not faces:
-            logging.warning(f"Invalid OBJ file: {obj_file}, using zero shape scan")
+            print(f"Invalid OBJ file: {obj_file}, using zero shape scan")
             return torch.zeros(1, self.lidar_hbeams, self.lidar_vbeams, device=self.device)
         
         vertices = np.array(vertices)
@@ -158,7 +158,7 @@ class NavigationEnv(IsaacEnv):
         shape_scan = torch.tensor(shape_distances, dtype=torch.float32, device=self.device)
         shape_scan = shape_scan.unsqueeze(0)  # Add batch dimension: (1, H, V)
         
-        logging.info(f"Shape scan statistics - min: {shape_scan.min():.4f}, max: {shape_scan.max():.4f}, mean: {shape_scan.mean():.4f}")
+        print(f"Shape scan statistics - min: {shape_scan.min():.4f}, max: {shape_scan.max():.4f}, mean: {shape_scan.mean():.4f}")
         
         return shape_scan
     
@@ -238,7 +238,7 @@ class NavigationEnv(IsaacEnv):
                 if hasattr(marker_cfg, "color"):
                     cfg.center_marker_color = tuple(float(v) for v in marker_cfg.color)
                 
-                logging.info(f"Enabling whole-body visualization with OBJ file: {cfg.center_marker_shape}.obj")
+                print(f"Enabling whole-body visualization with OBJ file: {cfg.center_marker_shape}.obj")
         else:
             cfg.center_marker = False
         # ====================================================================
@@ -616,16 +616,30 @@ class NavigationEnv(IsaacEnv):
         # -----------Network Input I: LiDAR range data--------------
 
         # ==================== whole-body scan ====================
-        # Step 1: Calculate raw LiDAR scan (from drone center to hit point)
-        raw_lidar_scan = self.lidar_range - (
+        # Step 1: Calculate distance from drone center to obstacles
+        ray_distances = (
             (self.lidar.data.ray_hits_w - self.lidar.data.pos_w.unsqueeze(1))
             .norm(dim=-1)
             .clamp_max(self.lidar_range)
             .reshape(self.num_envs, 1, *self.lidar_resolution)
         )
         
-        # Step 2: Subtract shape_scan to get distance from robot surface to obstacle
-        self.lidar_scan = (raw_lidar_scan - self.shape_scan).clamp(min=0.0)
+        # Debug: print raw lidar values at first step
+        if self.progress_buf[0] == 0:
+            print(f"[DEBUG] lidar_range: {self.lidar_range:.4f}m")
+            print(f"[DEBUG] ray_distances - min: {ray_distances.min().item():.4f}, max: {ray_distances.max().item():.4f}, mean: {ray_distances.mean().item():.4f}")
+            print(f"[DEBUG] shape_scan - min: {self.shape_scan.min().item():.4f}, max: {self.shape_scan.max().item():.4f}, mean: {self.shape_scan.mean().item():.4f}")
+        
+        # Step 2: Calculate clearance from robot surface to obstacle
+        # clearance = distance_from_center - robot_radius_in_that_direction
+        clearance = (ray_distances - self.shape_scan).clamp(min=0.0)
+        
+        # Step 3: Convert to "remaining distance" format for compatibility with existing code
+        # lidar_scan represents "free space" where larger values = more clearance
+        self.lidar_scan = clearance
+        
+        if self.progress_buf[0] == 0:
+            print(f"[DEBUG] clearance (lidar_scan) - min: {self.lidar_scan.min().item():.4f}, max: {self.lidar_scan.max().item():.4f}, mean: {self.lidar_scan.mean().item():.4f}") 
         # ============================================================
 
         # Optional render for LiDAR
@@ -684,6 +698,9 @@ class NavigationEnv(IsaacEnv):
             closest_dyn_obs_distance_z = closest_dyn_obs_rpos_g[..., 2].unsqueeze(-1)
             closest_dyn_obs_rpos_gn = closest_dyn_obs_rpos_g / closest_dyn_obs_distance.clamp(1e-6)
 
+            # Get size of dynamic obstacles (needed for whole-body clearance computation)
+            closest_dyn_obs_size = self.dyn_obs_size[closest_dyn_obs_idx] # the actual size
+
             # ==================== whole-body (shape-based clearance for dynamics) ====================
             # Compute robot radial extent along the direction to each obstacle by indexing shape_scan
             dir_vec = closest_dyn_obs_rpos / closest_dyn_obs_distance.clamp_min(1e-6)  # (N, K, 3), normalized
@@ -726,9 +743,7 @@ class NavigationEnv(IsaacEnv):
             closest_dyn_obs_vel[dyn_obs_range_mask] = 0.
             closest_dyn_obs_vel_g = vec_to_new_frame(closest_dyn_obs_vel, target_dir_2d) 
 
-            # c. Size of dynamic obstacles in category
-            closest_dyn_obs_size = self.dyn_obs_size[closest_dyn_obs_idx] # the acutal size
-
+            # c. Size of dynamic obstacles in category (already defined above for whole-body clearance)
             closest_dyn_obs_width = closest_dyn_obs_size[..., 0].unsqueeze(-1)
             closest_dyn_obs_width_category = closest_dyn_obs_width / self.dyn_obs_width_res - 1. # convert to category: [0, 1, 2, 3]
             closest_dyn_obs_width_category[dyn_obs_range_mask] = 0.
@@ -806,10 +821,21 @@ class NavigationEnv(IsaacEnv):
         # f. Collision condition with its penalty
         # ==================== whole-body ====================
         # Static collision already uses surface distance via lidar_scan
-        static_collision = einops.reduce(self.lidar_scan, "n 1 w h -> n 1", "min") < 0.2  # 0.2m safety margin
+        lidar_min = einops.reduce(self.lidar_scan, "n 1 w h -> n 1", "min")
+        
+        # Debug: print stats at first step
+        if self.progress_buf[0] == 0:
+            print(f"[DEBUG] lidar_scan (clearance) - min: {self.lidar_scan.min().item():.4f}, max: {self.lidar_scan.max().item():.4f}, mean: {self.lidar_scan.mean().item():.4f}")
+            print(f"[DEBUG] lidar_min - min: {lidar_min.min().item():.4f}, max: {lidar_min.max().item():.4f}")
+        
+        # Relaxed collision threshold: use 0.15m instead of 0.2m, and skip first 3 steps
+        collision_threshold = 0.15
+        static_collision = (lidar_min < collision_threshold) & (self.progress_buf.unsqueeze(1) > 3)
         # Dynamic collision: surface clearance in 3D less than margin
         if (self.cfg.env_dyn.num_obstacles != 0):
-            dynamic_collision = (closest_dyn_obs_clearance_reward.min(dim=1, keepdim=True).values < 0.2)
+            dynamic_collision = (closest_dyn_obs_clearance_reward.min(dim=1, keepdim=True).values < collision_threshold) & (self.progress_buf.unsqueeze(1) > 3)
+        else:
+            dynamic_collision = torch.zeros_like(static_collision)
         # ==================== whole-body ====================
         collision = static_collision | dynamic_collision
         
@@ -829,6 +855,7 @@ class NavigationEnv(IsaacEnv):
         below_bound = self.drone.pos[..., 2] < 0.2
         above_bound = self.drone.pos[..., 2] > 4.
         self.terminated = below_bound | above_bound | collision
+        
         self.truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1) # progress buf is to track the step number
 
         # ==================== whole-body shape scan ====================

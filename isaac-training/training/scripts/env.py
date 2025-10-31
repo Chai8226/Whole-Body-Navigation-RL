@@ -827,13 +827,13 @@ class NavigationEnv(IsaacEnv):
         if self.progress_buf[0] == 0:
             print(f"[DEBUG] lidar_scan (clearance) - min: {self.lidar_scan.min().item():.4f}, max: {self.lidar_scan.max().item():.4f}, mean: {self.lidar_scan.mean().item():.4f}")
             print(f"[DEBUG] lidar_min - min: {lidar_min.min().item():.4f}, max: {lidar_min.max().item():.4f}")
-        
-        # Relaxed collision threshold: use 0.15m instead of 0.2m, and skip first 3 steps
-        collision_threshold = 0.15
-        static_collision = (lidar_min < collision_threshold) & (self.progress_buf.unsqueeze(1) > 3)
+
+        # Relaxed collision threshold: use 0.1m, and skip first 3 steps
+        collision_threshold = 0.1
+        static_collision = (lidar_min < collision_threshold) & (self.progress_buf.unsqueeze(1) > 5)
         # Dynamic collision: surface clearance in 3D less than margin
         if (self.cfg.env_dyn.num_obstacles != 0):
-            dynamic_collision = (closest_dyn_obs_clearance_reward.min(dim=1, keepdim=True).values < collision_threshold) & (self.progress_buf.unsqueeze(1) > 3)
+            dynamic_collision = (closest_dyn_obs_clearance_reward.min(dim=1, keepdim=True).values < collision_threshold) & (self.progress_buf.unsqueeze(1) > 5)
         else:
             dynamic_collision = torch.zeros_like(static_collision)
         # ==================== whole-body ====================
@@ -842,13 +842,13 @@ class NavigationEnv(IsaacEnv):
         # ==================== whole-body shape scan ====================
         # Final reward calculation
         if (self.cfg.env_dyn.num_obstacles != 0):
-            self.reward = reward_vel + 1. + reward_safety_static * 1.0 + reward_safety_dynamic * 1.0 - penalty_smooth * 0.1 - penalty_yaw_smooth * 0.1 - penalty_height * 8.0
+            self.reward = reward_vel * 1.5 + 1. + reward_safety_static * 1.5 + reward_safety_dynamic * 1.5 - penalty_smooth * 0.1 - penalty_yaw_smooth * 0.1 - penalty_height * 8.0
         else:
-            self.reward = reward_vel + 1. + reward_safety_static * 1.0 - penalty_smooth * 0.1 - penalty_yaw_smooth * 0.1 - penalty_height * 8.0
+            self.reward = reward_vel * 1.5 + 1. + reward_safety_static * 1.5 - penalty_smooth * 0.1 - penalty_yaw_smooth * 0.1 - penalty_height * 8.0
+        
+        self.reward[collision] -= 10. # collision
         # ==================== whole-body shape scan ====================
-
-        # Terminal reward
-        # self.reward[collision] -= 50. # collision
+        
 
         # Terminate Conditions
         reach_goal = (distance.squeeze(-1) < 0.5)

@@ -814,6 +814,7 @@ class NavigationEnv(IsaacEnv):
         else:
             dynamic_collision = torch.zeros_like(static_collision)
         # ==================== whole-body ====================
+        
         collision = static_collision | dynamic_collision
         
         # ==================== whole-body shape scan ====================
@@ -823,7 +824,6 @@ class NavigationEnv(IsaacEnv):
         else:
             self.reward = reward_vel * 1.5 + 1. + reward_safety_static * 1.5 - penalty_smooth * 0.1 - penalty_height * 8.0
         
-        self.reward[collision] -= 10. # collision
         # ==================== whole-body shape scan ====================
         
 

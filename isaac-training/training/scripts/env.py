@@ -79,11 +79,6 @@ class NavigationEnv(IsaacEnv):
             self.target_dir = torch.zeros(self.num_envs, 1, 3)
             self.height_range = torch.zeros(self.num_envs, 1, 2)
             self.prev_drone_vel_w = torch.zeros(self.num_envs, 1 , 3)
-            # ==================== whole-body shape scan ====================
-            # yaw smoothing cache: previous and current yaw action (shape: [N,1,1])
-            self.prev_yaw_action = torch.zeros(self.num_envs, 1, 1)
-            self.current_yaw_action = torch.zeros(self.num_envs, 1, 1)
-            # ==================== whole-body shape scan ====================
     
     # ==================== whole-body ====================
     def _compute_shape_scan(self, shape_name):
@@ -583,24 +578,10 @@ class NavigationEnv(IsaacEnv):
 
         self.stats[env_ids] = 0.  
 
-        # ==================== whole-body shape scan ====================
-        # reset yaw smoothing caches
-        self.prev_yaw_action[env_ids] = 0.
-        self.current_yaw_action[env_ids] = 0.
-        # ==================== whole-body shape scan ====================
     
-    # ==================== whole-body shape scan ====================
     def _pre_sim_step(self, tensordict: TensorDictBase):
-        # cache current yaw action from transforms (if provided)
-        if ("info", "target_yaw_action") in tensordict.keys(True, True):
-            yaw_act = tensordict[("info", "target_yaw_action")]
-            # ensure shape [N,1,1]
-            if yaw_act.ndim == 2:
-                yaw_act = yaw_act.unsqueeze(-1)
-            self.current_yaw_action = yaw_act
         actions = tensordict[("agents", "action")]
-        self.drone.apply_action(actions) 
-    # ==================== whole-body shape scan ====================
+        self.drone.apply_action(actions)
 
     def _post_sim_step(self, tensordict: TensorDictBase):
         if (self.cfg.env_dyn.num_obstacles != 0):
@@ -807,10 +788,6 @@ class NavigationEnv(IsaacEnv):
         # d. smoothness reward for action smoothness
         penalty_smooth = (self.drone.vel_w[..., :3] - self.prev_drone_vel_w).norm(dim=-1)
 
-        # ==================== whole-body shape scan ====================
-        # add yaw action smoothness: penalize change of yaw control between steps
-        yaw_delta = (self.current_yaw_action - self.prev_yaw_action).abs().squeeze(-1)  # shape: [N,1]
-        penalty_yaw_smooth = yaw_delta
         
         # e. height penalty reward for flying unnessarily high or low
         penalty_height = torch.zeros(self.num_envs, 1, device=self.cfg.device)
@@ -842,9 +819,9 @@ class NavigationEnv(IsaacEnv):
         # ==================== whole-body shape scan ====================
         # Final reward calculation
         if (self.cfg.env_dyn.num_obstacles != 0):
-            self.reward = reward_vel * 1.5 + 1. + reward_safety_static * 1.5 + reward_safety_dynamic * 1.5 - penalty_smooth * 0.1 - penalty_yaw_smooth * 0.1 - penalty_height * 8.0
+            self.reward = reward_vel * 1.5 + 1. + reward_safety_static * 1.5 + reward_safety_dynamic * 1.5 - penalty_smooth * 0.1 - penalty_height * 8.0
         else:
-            self.reward = reward_vel * 1.5 + 1. + reward_safety_static * 1.5 - penalty_smooth * 0.1 - penalty_yaw_smooth * 0.1 - penalty_height * 8.0
+            self.reward = reward_vel * 1.5 + 1. + reward_safety_static * 1.5 - penalty_smooth * 0.1 - penalty_height * 8.0
         
         self.reward[collision] -= 10. # collision
         # ==================== whole-body shape scan ====================
@@ -858,12 +835,8 @@ class NavigationEnv(IsaacEnv):
         
         self.truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1) # progress buf is to track the step number
 
-        # ==================== whole-body shape scan ====================
         # update previous velocity for smoothness calculation in the next iteration
         self.prev_drone_vel_w = self.drone.vel_w[..., :3].clone()
-        # update previous yaw action cache
-        self.prev_yaw_action = self.current_yaw_action.clone()
-        # ==================== whole-body shape scan ====================
 
         # # -----------------Training Stats-----------------
         self.stats["return"] += self.reward

@@ -52,7 +52,7 @@ def main(cfg):
     transforms = []
     # transforms.append(ravel_composite(env.observation_spec, ("agents", "intrinsics"), start_dim=-1))
     controller = LeePositionController(9.81, env.drone.params).to(cfg.device)
-    vel_transform = VelController(controller, yaw_control=True)
+    vel_transform = VelController(controller, yaw_control=False)
     transforms.append(vel_transform)
     transformed_env = TransformedEnv(env, Compose(*transforms)).train()
     transformed_env.set_seed(cfg.seed)

@@ -317,13 +317,13 @@ class NavigationEnv(IsaacEnv):
             cuboid = sim_utils.CuboidCfg(
                 size=(L, T, T),
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    kinematic_enabled=False,
+                    kinematic_enabled=True,  # Make it truly static (kinematic rigid body)
                     disable_gravity=True,
                     retain_accelerations=False,
                 ),
                 mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
                 collision_props=sim_utils.CollisionPropertiesCfg(
-                    collision_enabled=True,
+                    collision_enabled=False,  # Disable physics collision between beams
                 ),
                 activate_contact_sensors=False,
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.2, 0.5, 0.8), metallic=0.3),
@@ -340,13 +340,13 @@ class NavigationEnv(IsaacEnv):
             cuboid = sim_utils.CuboidCfg(
                 size=(T, L, T),
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    kinematic_enabled=False,
+                    kinematic_enabled=True,  # Make it truly static (kinematic rigid body)
                     disable_gravity=True,
                     retain_accelerations=False,
                 ),
                 mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
                 collision_props=sim_utils.CollisionPropertiesCfg(
-                    collision_enabled=True,
+                    collision_enabled=False,  # Disable physics collision between beams
                 ),
                 activate_contact_sensors=False,
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.3, 0.5), metallic=0.3),

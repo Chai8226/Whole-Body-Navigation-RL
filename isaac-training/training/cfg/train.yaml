@@ -22,10 +22,10 @@ env:
 
   # ==================== whole-body ====================
   # Static horizontal beams configuration
-  num_static_beams: 100             # Number of horizontal beams
-  beam_length_range: [3.0, 10.0]    # Beam length range (m)
-  beam_thickness_range: [0.5, 2.0]  # Beam thickness range (m)
-  beam_height_range: [0.5, 3.0]     # Beam height above ground (m)
+  num_static_beams: 50             # Number of horizontal beams
+  beam_length_range: [1.0, 10.0]    # Beam length range (m)
+  beam_thickness_range: [0.5, 1.0]  # Beam thickness range (m)
+  beam_height_range: [0.5, 3.5]     # Beam height above ground (m)
   # ==================== whole-body ====================
 
 env_dyn:

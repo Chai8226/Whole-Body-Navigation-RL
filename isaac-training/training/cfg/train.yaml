@@ -20,6 +20,14 @@ env:
   env_spacing: 8.0 
   num_obstacles: 200
 
+  # ==================== whole-body ====================
+  # Static horizontal beams configuration
+  num_static_beams: 100             # Number of horizontal beams
+  beam_length_range: [5.0, 15.0]    # Beam length range (m)
+  beam_thickness_range: [1.0, 2.0]  # Beam thickness range (m)
+  beam_height_range: [0.5, 4.0]     # Beam height above ground (m)
+  # ==================== whole-body ====================
+
 env_dyn:
   num_obstacles: 80 # set to zero if static env is needed
   vel_range: [0.5, 1.5]

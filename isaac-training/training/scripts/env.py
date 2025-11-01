@@ -30,7 +30,7 @@ class NavigationEnv(IsaacEnv):
     # 3. increment progress_buf
     # 4. _compute_state_and_obs (get observation and states, update stats)
     # 5. _compute_reward_and_done (update reward and calculate returns)
-
+    
     def __init__(self, cfg):
         print("[Navigation Environment]: Initializing Env...")
         # LiDAR params:
@@ -79,7 +79,8 @@ class NavigationEnv(IsaacEnv):
             self.target_dir = torch.zeros(self.num_envs, 1, 3)
             self.height_range = torch.zeros(self.num_envs, 1, 2)
             self.prev_drone_vel_w = torch.zeros(self.num_envs, 1 , 3)
-    
+
+   
     # ==================== whole-body ====================
     def _compute_shape_scan(self, shape_name):
         """
@@ -297,8 +298,53 @@ class NavigationEnv(IsaacEnv):
         )
         terrain_importer = TerrainImporter(terrain_cfg)
 
+        # ==================== whole-body ====================
+        # added: Static horizontal beams (suspended obstacles)
+        num_beams = int(getattr(self.cfg.env, "num_static_beams", 12))
+        beam_len_range = tuple(getattr(self.cfg.env, "beam_length_range", [2.0, 6.0]))
+        beam_thk_range = tuple(getattr(self.cfg.env, "beam_thickness_range", [0.2, 0.4]))
+        beam_z_range = tuple(getattr(self.cfg.env, "beam_height_range", [1.0, 3.0]))
+
+        prim_utils.create_prim("/World/ground/static_obstacles", "Xform")
+
+        # aloneg X direction beams (long in X, thin in Y, thin in Z)
+        for i in range(num_beams // 2 + num_beams % 2):
+            L = float(np.random.uniform(*beam_len_range))
+            T = float(np.random.uniform(*beam_thk_range))
+            z = float(np.random.uniform(*beam_z_range))
+            x = float(np.random.uniform(-self.map_range[0]+1.5, self.map_range[0]-1.5))
+            y = float(np.random.uniform(-self.map_range[1]+1.5, self.map_range[1]-1.5))
+            cuboid = sim_utils.CuboidCfg(
+                size=(L, T, T),
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+                mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
+                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.2, 0.5, 0.8), metallic=0.3),
+            )
+            cuboid.func(f"/World/ground/static_obstacles/BeamX_{i}", cuboid, translation=(x, y, z))
+
+        # along Y direction beams (long in Y, thin in X, thin in Z)
+        for i in range(num_beams // 2):
+            L = float(np.random.uniform(*beam_len_range))
+            T = float(np.random.uniform(*beam_thk_range))
+            z = float(np.random.uniform(*beam_z_range))
+            x = float(np.random.uniform(-self.map_range[0]+1.5, self.map_range[0]-1.5))
+            y = float(np.random.uniform(-self.map_range[1]+1.5, self.map_range[1]-1.5))
+            cuboid = sim_utils.CuboidCfg(
+                size=(T, L, T),
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+                mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
+                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
+                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.3, 0.5), metallic=0.3),
+            )
+            cuboid.func(f"/World/ground/static_obstacles/BeamY_{i}", cuboid, translation=(x, y, z))
+        
+        print(f"[Navigation Environment]: Generated {num_beams} horizontal beams as static 3D obstacles")
+        # ==================== whole-body ====================
+
         if (self.cfg.env_dyn.num_obstacles == 0):
             return
+        
         # Dynamic Obstacles
         # NOTE: we use cuboid to represent 3D dynamic obstacles which can float in the air 
         # and the long cylinder to represent 2D dynamic obstacles for which the drone can only pass in 2D 

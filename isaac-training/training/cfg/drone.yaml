@@ -4,7 +4,7 @@ drone:
   # ==================== whole-body parameters ====================
   marker:
     enable: true            # whether to attach a marker at drone center
-    shape: "cuboid_1"       # obj file name
+    shape: "drone_base"     # obj file name. cuboid_1 drone_base
   
   # ==================== whole-body ====================
 

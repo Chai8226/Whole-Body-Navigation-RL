@@ -307,7 +307,7 @@ class NavigationEnv(IsaacEnv):
 
         prim_utils.create_prim("/World/ground/static_obstacles", "Xform")
 
-        # aloneg X direction beams (long in X, thin in Y, thin in Z)
+        # along X direction beams (long in X, thin in Y, thin in Z)
         for i in range(num_beams // 2 + num_beams % 2):
             L = float(np.random.uniform(*beam_len_range))
             T = float(np.random.uniform(*beam_thk_range))
@@ -316,9 +316,16 @@ class NavigationEnv(IsaacEnv):
             y = float(np.random.uniform(-self.map_range[1]+1.5, self.map_range[1]-1.5))
             cuboid = sim_utils.CuboidCfg(
                 size=(L, T, T),
-                rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                    kinematic_enabled=False,
+                    disable_gravity=True,
+                    retain_accelerations=False,
+                ),
                 mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
-                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
+                collision_props=sim_utils.CollisionPropertiesCfg(
+                    collision_enabled=True,
+                ),
+                activate_contact_sensors=False,
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.2, 0.5, 0.8), metallic=0.3),
             )
             cuboid.func(f"/World/ground/static_obstacles/BeamX_{i}", cuboid, translation=(x, y, z))
@@ -332,9 +339,16 @@ class NavigationEnv(IsaacEnv):
             y = float(np.random.uniform(-self.map_range[1]+1.5, self.map_range[1]-1.5))
             cuboid = sim_utils.CuboidCfg(
                 size=(T, L, T),
-                rigid_props=sim_utils.RigidBodyPropertiesCfg(),
+                rigid_props=sim_utils.RigidBodyPropertiesCfg(
+                    kinematic_enabled=False,
+                    disable_gravity=True,
+                    retain_accelerations=False,
+                ),
                 mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
-                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
+                collision_props=sim_utils.CollisionPropertiesCfg(
+                    collision_enabled=True,
+                ),
+                activate_contact_sensors=False,
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.3, 0.5), metallic=0.3),
             )
             cuboid.func(f"/World/ground/static_obstacles/BeamY_{i}", cuboid, translation=(x, y, z))

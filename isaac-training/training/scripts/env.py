@@ -83,8 +83,9 @@ class NavigationEnv(IsaacEnv):
     # ==================== whole-body ====================
     def _compute_shape_scan(self, shape_name):
         """
-        Compute distance from robot center to surface along each ray direction.
+        Compute distance from robot center to the outermost surface along each ray direction.
         This creates a shape scan with the same dimensions as lidar_scan.
+        Returns the MAXIMUM distance along each ray to represent the robot's outer boundary.
         
         Args:
             shape_name: Name of the OBJ file (without .obj extension)
@@ -140,14 +141,14 @@ class NavigationEnv(IsaacEnv):
                 ])
                 
                 # Find intersection with mesh
-                min_distance = self._ray_mesh_intersection(
+                max_distance = self._ray_mesh_intersection(
                     ray_origin=np.array([0.0, 0.0, 0.0]),
                     ray_direction=ray_dir,
                     vertices=vertices,
                     faces=faces
                 )
                 
-                shape_distances[h_idx, v_idx] = min_distance
+                shape_distances[h_idx, v_idx] = max_distance
         
         # Convert to torch tensor
         shape_scan = torch.tensor(shape_distances, dtype=torch.float32, device=self.device)
@@ -155,12 +156,31 @@ class NavigationEnv(IsaacEnv):
         
         print(f"Shape scan statistics - min: {shape_scan.min():.4f}, max: {shape_scan.max():.4f}, mean: {shape_scan.mean():.4f}")
         
+        # Save shape_scan data to file for visualization
+        save_folder = os.path.join(os.path.dirname(__file__), "..", "shape_scan_data")
+        os.makedirs(save_folder, exist_ok=True)
+        save_file = os.path.join(save_folder, f"{shape_name}_shape_scan.npz")
+        
+        # Save both the shape_scan and metadata
+        np.savez(
+            save_file,
+            shape_scan=shape_scan.cpu().numpy(),
+            shape_name=shape_name,
+            lidar_hbeams=self.lidar_hbeams,
+            lidar_vbeams=self.lidar_vbeams,
+            lidar_vfov=self.lidar_vfov,
+            horizontal_angles=horizontal_angles,
+            vertical_angles=vertical_angles,
+        )
+        print(f"Shape scan saved to: {save_file}")
+        
         return shape_scan
     
     def _ray_mesh_intersection(self, ray_origin, ray_direction, vertices, faces):
         """
-        Compute the nearest intersection distance between a ray and a triangle mesh.
+        Compute the farthest intersection distance between a ray and a triangle mesh.
         Uses Möller-Trumbore ray-triangle intersection algorithm.
+        This returns the maximum distance to represent the outermost surface of the robot.
         
         Args:
             ray_origin: Origin of the ray (3,)
@@ -169,10 +189,10 @@ class NavigationEnv(IsaacEnv):
             faces: Mesh faces (M, 3), indices into vertices
             
         Returns:
-            float: Distance to nearest intersection, or 0 if no intersection
+            float: Distance to farthest intersection, or 0 if no intersection
         """
         epsilon = 1e-6
-        min_distance = float('inf')
+        max_distance = 0.0  # Changed from min_distance to max_distance
         
         # Normalize ray direction
         ray_direction = ray_direction / (np.linalg.norm(ray_direction) + epsilon)
@@ -208,11 +228,12 @@ class NavigationEnv(IsaacEnv):
             t = f * np.dot(edge2, q)
             
             # Valid intersection (in front of ray origin)
+            # Take the MAXIMUM distance to get the outermost surface
             if t > epsilon:
-                min_distance = min(min_distance, t)
+                max_distance = max(max_distance, t)
         
         # Return 0 if no intersection found (ray doesn't hit the mesh)
-        return 0.0 if min_distance == float('inf') else min_distance
+        return max_distance
     # ==================== whole-body ====================
 
     def _design_scene(self):

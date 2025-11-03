@@ -59,11 +59,10 @@ class NavigationEnv(IsaacEnv):
             ),
             debug_vis=False,
             mesh_prim_paths=["/World/ground"],
-            # mesh_prim_paths=["/World"],
         )
         self.lidar = RayCaster(ray_caster_cfg)
         self.lidar._initialize_impl()
-        self.lidar_resolution = (self.lidar_hbeams, self.lidar_vbeams) 
+        self.lidar_resolution = (self.lidar_hbeams, self.lidar_vbeams)
         
         # ==================== whole-body shape scan ====================
         # Compute robot shape scan: distance from center to surface along each ray
@@ -299,61 +298,92 @@ class NavigationEnv(IsaacEnv):
         terrain_importer = TerrainImporter(terrain_cfg)
 
         # ==================== whole-body ====================
-        # added: Static horizontal beams (suspended obstacles)
+        # Add horizontal beams to the terrain mesh so LiDAR can detect them
+        import trimesh
+        from pxr import UsdGeom
+        
         num_beams = int(getattr(self.cfg.env, "num_static_beams", 12))
         beam_len_range = tuple(getattr(self.cfg.env, "beam_length_range", [2.0, 6.0]))
         beam_thk_range = tuple(getattr(self.cfg.env, "beam_thickness_range", [0.2, 0.4]))
         beam_z_range = tuple(getattr(self.cfg.env, "beam_height_range", [1.0, 3.0]))
-
-        prim_utils.create_prim("/World/ground/static_obstacles", "Xform")
-
-        # along X direction beams (long in X, thin in Y, thin in Z)
-        for i in range(num_beams // 2 + num_beams % 2):
-            L = float(np.random.uniform(*beam_len_range))
-            T = float(np.random.uniform(*beam_thk_range))
-            z = float(np.random.uniform(*beam_z_range))
-            x = float(np.random.uniform(-self.map_range[0]+1.5, self.map_range[0]-1.5))
-            y = float(np.random.uniform(-self.map_range[1]+1.5, self.map_range[1]-1.5))
-            cuboid = sim_utils.CuboidCfg(
-                size=(L, T, T),
-                rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    kinematic_enabled=True,  # Make it truly static (kinematic rigid body)
-                    disable_gravity=True,
-                    retain_accelerations=False,
-                ),
-                mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
-                collision_props=sim_utils.CollisionPropertiesCfg(
-                    collision_enabled=False,  # Disable physics collision between beams
-                ),
-                activate_contact_sensors=False,
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.2, 0.5, 0.8), metallic=0.3),
-            )
-            cuboid.func(f"/World/ground/static_obstacles/BeamX_{i}", cuboid, translation=(x, y, z))
-
-        # along Y direction beams (long in Y, thin in X, thin in Z)
-        for i in range(num_beams // 2):
-            L = float(np.random.uniform(*beam_len_range))
-            T = float(np.random.uniform(*beam_thk_range))
-            z = float(np.random.uniform(*beam_z_range))
-            x = float(np.random.uniform(-self.map_range[0]+1.5, self.map_range[0]-1.5))
-            y = float(np.random.uniform(-self.map_range[1]+1.5, self.map_range[1]-1.5))
-            cuboid = sim_utils.CuboidCfg(
-                size=(T, L, T),
-                rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    kinematic_enabled=True,  # Make it truly static (kinematic rigid body)
-                    disable_gravity=True,
-                    retain_accelerations=False,
-                ),
-                mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
-                collision_props=sim_utils.CollisionPropertiesCfg(
-                    collision_enabled=False,  # Disable physics collision between beams
-                ),
-                activate_contact_sensors=False,
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.3, 0.5), metallic=0.3),
-            )
-            cuboid.func(f"/World/ground/static_obstacles/BeamY_{i}", cuboid, translation=(x, y, z))
         
-        print(f"[Navigation Environment]: Generated {num_beams} horizontal beams as static 3D obstacles")
+        # Get the terrain mesh prim to append beam geometries
+        stage = prim_utils.get_current_stage()
+        terrain_mesh_prim_path = "/World/ground/terrain/mesh"
+        terrain_mesh_prim = UsdGeom.Mesh.Get(stage, terrain_mesh_prim_path)
+        
+        if terrain_mesh_prim:
+            # Get existing mesh data
+            existing_points = list(terrain_mesh_prim.GetPointsAttr().Get())
+            existing_face_counts = list(terrain_mesh_prim.GetFaceVertexCountsAttr().Get())
+            existing_face_indices = list(terrain_mesh_prim.GetFaceVertexIndicesAttr().Get())
+            vertex_offset = len(existing_points)
+            
+            # Generate beam meshes and append to terrain
+            beam_meshes = []
+            
+            # X-direction beams
+            for i in range(num_beams // 2 + num_beams % 2):
+                L = float(np.random.uniform(*beam_len_range))
+                T = float(np.random.uniform(*beam_thk_range))
+                z = float(np.random.uniform(*beam_z_range))
+                x = float(np.random.uniform(-self.map_range[0]+1.5, self.map_range[0]-1.5))
+                y = float(np.random.uniform(-self.map_range[1]+1.5, self.map_range[1]-1.5))
+                
+                # Create box vertices
+                lx, ly, lz = L/2, T/2, T/2
+                box_verts = np.array([
+                    [x-lx, y-ly, z-lz], [x+lx, y-ly, z-lz], [x+lx, y+ly, z-lz], [x-lx, y+ly, z-lz],
+                    [x-lx, y-ly, z+lz], [x+lx, y-ly, z+lz], [x+lx, y+ly, z+lz], [x-lx, y+ly, z+lz]
+                ])
+                beam_meshes.append((box_verts, vertex_offset))
+                vertex_offset += 8
+            
+            # Y-direction beams
+            for i in range(num_beams // 2):
+                L = float(np.random.uniform(*beam_len_range))
+                T = float(np.random.uniform(*beam_thk_range))
+                z = float(np.random.uniform(*beam_z_range))
+                x = float(np.random.uniform(-self.map_range[0]+1.5, self.map_range[0]-1.5))
+                y = float(np.random.uniform(-self.map_range[1]+1.5, self.map_range[1]-1.5))
+                
+                # Create box vertices
+                lx, ly, lz = T/2, L/2, T/2
+                box_verts = np.array([
+                    [x-lx, y-ly, z-lz], [x+lx, y-ly, z-lz], [x+lx, y+ly, z-lz], [x-lx, y+ly, z-lz],
+                    [x-lx, y-ly, z+lz], [x+lx, y-ly, z+lz], [x+lx, y+ly, z+lz], [x-lx, y+ly, z+lz]
+                ])
+                beam_meshes.append((box_verts, vertex_offset))
+                vertex_offset += 8
+            
+            # Box face topology (same for all boxes)
+            box_face_indices = [
+                0, 1, 2, 3,  # bottom
+                4, 5, 6, 7,  # top
+                0, 1, 5, 4,  # front
+                2, 3, 7, 6,  # back
+                0, 3, 7, 4,  # left
+                1, 2, 6, 5   # right
+            ]
+            
+            # Append all beam vertices and faces to the terrain mesh
+            for verts, offset in beam_meshes:
+                for vert in verts:
+                    existing_points.append(tuple(vert))
+                for idx in box_face_indices:
+                    existing_face_indices.append(offset + idx)
+                for _ in range(6):  # 6 quad faces per box
+                    existing_face_counts.append(4)
+            
+            # Update the terrain mesh with new geometry
+            from pxr import Vt
+            terrain_mesh_prim.GetPointsAttr().Set(Vt.Vec3fArray(existing_points))
+            terrain_mesh_prim.GetFaceVertexCountsAttr().Set(existing_face_counts)
+            terrain_mesh_prim.GetFaceVertexIndicesAttr().Set(existing_face_indices)
+            
+            print(f"[Navigation Environment]: Added {num_beams} horizontal beams to terrain mesh for LiDAR detection")
+        else:
+            print(f"[WARNING]: Could not find terrain mesh at {terrain_mesh_prim_path}, beams will not be detected by LiDAR!")
         # ==================== whole-body ====================
 
         if (self.cfg.env_dyn.num_obstacles == 0):
@@ -637,8 +667,7 @@ class NavigationEnv(IsaacEnv):
         self.height_range[env_ids, 0, 1] = torch.max(pos[:, 0, 2], self.target_pos[env_ids, 0, 2])
 
         self.stats[env_ids] = 0.  
-
-    
+ 
     def _pre_sim_step(self, tensordict: TensorDictBase):
         actions = tensordict[("agents", "action")]
         self.drone.apply_action(actions)

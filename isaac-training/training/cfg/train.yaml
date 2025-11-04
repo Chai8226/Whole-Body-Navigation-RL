@@ -28,6 +28,10 @@ env:
   height_penalty_weight: 8.0     # Weight of height penalty in reward function
   height_penalty_huber_delta: 0.5 # Huber loss delta: transition point from L2 to L1 (m)
   
+  # Safety reward parameters (exponential form: λ(1 - e^(-k*d²)))
+  safety_reward_lambda: 1.0      # Maximum reward value at infinite distance
+  safety_reward_k: 0.5           # Decay rate: larger k = faster saturation
+  
   # Static horizontal beams configuration
   num_static_beams: 50             # Number of horizontal beams
   beam_length_range: [1.0, 10.0]    # Beam length range (m)

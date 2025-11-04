@@ -885,16 +885,25 @@ class NavigationEnv(IsaacEnv):
         # -----------------Reward Calculation-----------------
         # a. safety reward for static obstacles
         # ==================== whole-body ====================
-        reward_safety_static = torch.log(self.lidar_scan.clamp(min=1e-6, max=self.lidar_range)).mean(dim=(2, 3))
+        # Using exponential decay form: λ(1 - e^(-k*d²))
+        # Advantages: bounded at d→0, smooth gradients, fast saturation at large d
+        safety_lambda = getattr(self.cfg.env, "safety_reward_lambda", 1.0)
+        safety_k = getattr(self.cfg.env, "safety_reward_k", 0.5)
+        
+        # Compute exponential safety reward for each clearance distance
+        clearance_squared = self.lidar_scan ** 2
+        reward_safety_static = safety_lambda * (1.0 - torch.exp(-safety_k * clearance_squared))
+        reward_safety_static = reward_safety_static.mean(dim=(2, 3))  # Average over all rays
         # ==================== whole-body ====================
         
-
+        # ==================== whole-body ====================
         # b. safety reward for dynamic obstacles
         if (self.cfg.env_dyn.num_obstacles != 0):
-            # ==================== whole-body ====================
-            # Use clearance-based distance for reward
-            reward_safety_dynamic = torch.log((closest_dyn_obs_clearance_reward).clamp(min=1e-6, max=self.lidar_range)).mean(dim=-1, keepdim=True)
-            # ==================== whole-body ====================
+            # Use clearance-based distance with exponential decay: λ(1 - e^(-k*d²))
+            clearance_dyn_squared = closest_dyn_obs_clearance_reward ** 2
+            reward_safety_dynamic = safety_lambda * (1.0 - torch.exp(-safety_k * clearance_dyn_squared))
+            reward_safety_dynamic = reward_safety_dynamic.mean(dim=-1, keepdim=True)
+        # ==================== whole-body ====================
 
         # c. velocity reward for goal direction
         vel_direction = rpos / distance.clamp_min(1e-6)
@@ -915,8 +924,6 @@ class NavigationEnv(IsaacEnv):
         lower_violation = torch.clamp((self.height_range[..., 0] - height_deadzone) - drone_height, min=0.0)
         
         # Huber loss: smooth L1 that transitions from quadratic to linear
-        # For |x| <= delta: loss = 0.5 * x²
-        # For |x| > delta: loss = delta * (|x| - 0.5 * delta)
         def huber_loss(x, delta):
             abs_x = torch.abs(x)
             quadratic = torch.where(abs_x <= delta, 0.5 * x**2, torch.zeros_like(x))

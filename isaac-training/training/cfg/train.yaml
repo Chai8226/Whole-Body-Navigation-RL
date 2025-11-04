@@ -39,7 +39,7 @@ env:
   beam_height_range: [0.5, 3.5]     # Beam height above ground (m)
   # ==================== whole-body ====================
 
-  # ==================== curriculum (reward weights) ====================
+  # ==================== whole-body curriculum (reward weights) ====================
   curriculum_total_steps: 1_000_000   # Total effective steps to reach p=1.0
   curriculum_step_divisor: 1.0        # Divide raw env steps to slow progression if needed
 
@@ -54,6 +54,7 @@ env:
   safety_dyn_weight_start: 0.5   # if dynamic obstacles enabled; defaults to safety_weight_* if absent
   safety_dyn_weight_end: 1.5
   curriculum_log_interval: 1000   # Log p and weights every N steps during training (<=0 disables)
+  curriculum_freeze_in_eval: true  # Do not advance curriculum_step during evaluation episodes
   # ======================================================
 
 env_dyn:

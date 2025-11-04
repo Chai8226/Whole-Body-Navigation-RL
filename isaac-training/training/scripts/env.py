@@ -56,6 +56,8 @@ class NavigationEnv(IsaacEnv):
         
         # Global curriculum step counter (counts env steps during training)
         self.curriculum_step = 0
+        self._last_training_flag = bool(self.training)
+        self._curriculum_step_checkpoint = 0
 
         # LiDAR Initialization (use precomputed vertical angles and beam count)
         ray_caster_cfg = RayCasterCfg(
@@ -330,7 +332,6 @@ class NavigationEnv(IsaacEnv):
 
         # ==================== whole-body ====================
         # Add horizontal beams to the terrain mesh so LiDAR can detect them
-        import trimesh
         from pxr import UsdGeom
         from pxr import Vt
         
@@ -709,6 +710,18 @@ class NavigationEnv(IsaacEnv):
         self.drone.apply_action(actions)
 
     def _post_sim_step(self, tensordict: TensorDictBase):
+        # Detect train/eval toggles and optionally freeze/restore curriculum counter during eval
+        freeze_in_eval = bool(getattr(self.cfg.env, "curriculum_freeze_in_eval", True))
+        if self.training != self._last_training_flag:
+            if freeze_in_eval:
+                if not self.training:
+                    # entering eval: checkpoint current counter
+                    self._curriculum_step_checkpoint = self.curriculum_step
+                else:
+                    # leaving eval back to training: restore counter (discard any eval increments)
+                    self.curriculum_step = self._curriculum_step_checkpoint
+            self._last_training_flag = bool(self.training)
+
         # advance global curriculum steps during training only
         if self.training:
             self.curriculum_step += 1
@@ -860,23 +873,10 @@ class NavigationEnv(IsaacEnv):
             # dyn_obs_states = torch.cat([closest_dyn_obs_rpos_g, closest_dyn_obs_vel_g, closest_dyn_obs_width_category, closest_dyn_obs_height_category], dim=-1).unsqueeze(1)
             dyn_obs_states = torch.cat([closest_dyn_obs_rpos_gn, closest_dyn_obs_distance_2d, closest_dyn_obs_distance_z, closest_dyn_obs_vel_g, closest_dyn_obs_width_category, closest_dyn_obs_height_category], dim=-1).unsqueeze(1)
 
-            # check dynamic obstacle collision for later reward
-            closest_dyn_obs_distance_2d_collsion = closest_dyn_obs_rpos[..., :2].norm(dim=-1, keepdim=True)
-            closest_dyn_obs_distance_2d_collsion[dyn_obs_range_mask] = float('inf')
-            closest_dyn_obs_distance_zn_collision = closest_dyn_obs_rpos[..., 2].unsqueeze(-1).norm(dim=-1, keepdim=True)
-            closest_dyn_obs_distance_zn_collision[dyn_obs_range_mask] = float('inf')
-            dynamic_collision_2d = closest_dyn_obs_distance_2d_collsion <= (closest_dyn_obs_width/2. + 0.3)
-            dynamic_collision_z = closest_dyn_obs_distance_zn_collision <= (closest_dyn_obs_height/2. + 0.3)
-            dynamic_collision_each = dynamic_collision_2d & dynamic_collision_z
-            dynamic_collision = torch.any(dynamic_collision_each, dim=1)
-
-            # distance to dynamic obstacle for reward calculation (not 100% correct in math but should be good enough for approximation)
-            closest_dyn_obs_distance_reward = closest_dyn_obs_rpos.norm(dim=-1) - closest_dyn_obs_size[..., 0]/2. # for those 2D obstacle, z distance will not be considered
-            closest_dyn_obs_distance_reward[dyn_obs_range_mask] = self.cfg.sensor.lidar_range
+            # remove early dynamic-collision heuristics; collision is computed later from clearance
             
         else:
             dyn_obs_states = torch.zeros(self.num_envs, 1, self.cfg.algo.feature_extractor.dyn_obs_num, 10, device=self.cfg.device)
-            dynamic_collision = torch.zeros(self.num_envs, 1, dtype=torch.bool, device=self.cfg.device)
             
         # -----------------Network Input Final--------------
         obs = {
@@ -947,11 +947,6 @@ class NavigationEnv(IsaacEnv):
         # Static collision already uses surface distance via lidar_scan
         lidar_min = einops.reduce(self.lidar_scan, "n 1 w h -> n 1", "min")
         
-        # Debug: print stats at first step
-        if self.progress_buf[0] == 0:
-            print(f"[DEBUG] lidar_scan (clearance) - min: {self.lidar_scan.min().item():.4f}, max: {self.lidar_scan.max().item():.4f}, mean: {self.lidar_scan.mean().item():.4f}")
-            print(f"[DEBUG] lidar_min - min: {lidar_min.min().item():.4f}, max: {lidar_min.max().item():.4f}")
-
         # Relaxed collision threshold: use 0.1m, and skip first 3 steps
         collision_threshold = 0.1
         static_collision = (lidar_min < collision_threshold) & (self.progress_buf.unsqueeze(1) > 5)
@@ -1014,15 +1009,19 @@ class NavigationEnv(IsaacEnv):
         should_log_train = self.training and (log_interval > 0) and (self.curriculum_step % log_interval == 0)
         should_log_eval = (not self.training) and (self.progress_buf[0].item() == 0)
         if should_log_train or should_log_eval:
+            # Use effective step for display to avoid confusion during eval
+            effective_step_display = (
+                self.curriculum_step if self.training else (self._curriculum_step_checkpoint if log_interval >= 0 else self.curriculum_step)
+            )
             if (self.cfg.env_dyn.num_obstacles != 0):
                 logging.info(
-                    f"[Curriculum] step={self.curriculum_step} p={p:.4f} "
+                    f"[Curriculum] step={effective_step_display} p={p:.4f} "
                     f"w_vel={w_vel:.3f} w_safety_static={w_safety_static:.3f} "
                     f"w_safety_dynamic={w_safety_dynamic:.3f}"
                 )
             else:
                 logging.info(
-                    f"[Curriculum] step={self.curriculum_step} p={p:.4f} "
+                    f"[Curriculum] step={effective_step_display} p={p:.4f} "
                     f"w_vel={w_vel:.3f} w_safety={w_safety_static:.3f}"
                 )
 

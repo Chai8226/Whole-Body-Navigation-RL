@@ -39,16 +39,6 @@ class NavigationEnv(IsaacEnv):
         self.lidar_vbeams = cfg.sensor.lidar_vbeams
         self.lidar_hres = cfg.sensor.lidar_hres
         self.lidar_hbeams = int(360/self.lidar_hres)
-
-        super().__init__(cfg, cfg.headless)
-        
-        # Drone Initialization
-        self.drone.initialize()
-        self.init_vels = torch.zeros_like(self.drone.get_velocities())
-
-
-        # LiDAR Intialization
-        # extend vertical angles with +/-90 deg layers
         self.vertical_ray_angles_deg = torch.cat(
             [
                 torch.tensor([-90.0]),
@@ -58,6 +48,14 @@ class NavigationEnv(IsaacEnv):
         )
         self.lidar_vbeams_ext = self.lidar_vbeams + 2
 
+        super().__init__(cfg, cfg.headless)
+        
+        # Drone Initialization
+        self.drone.initialize()
+        self.init_vels = torch.zeros_like(self.drone.get_velocities())
+
+
+        # LiDAR Initialization (use precomputed vertical angles and beam count)
         ray_caster_cfg = RayCasterCfg(
             prim_path="/World/envs/env_.*/Hummingbird_0/base_link",
             offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0)),

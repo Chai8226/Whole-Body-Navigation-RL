@@ -31,13 +31,6 @@ env:
   # Safety reward parameters (exponential form: λ(1 - e^(-k*d²)))
   safety_reward_lambda: 1.0      # Maximum reward value at infinite distance
   safety_reward_k: 0.5           # Decay rate: larger k = faster saturation
-  goal_reached_reward: 20.0        # Bonus reward for reaching the goal
-  curriculum:
-    start_steps: 1e4             # Steps to start curriculum
-    end_steps: 4e4               # Steps to end curriculum
-    count_mode: step             # step: per env step; frame: per-step x num_envs
-    goal_weight: [2.5, 1.5]      # [start, end] weights for goal-progress reward
-    safety_weight: [0.5, 1.5]    # [start, end] weights for safety reward
   
   # Static horizontal beams configuration
   num_static_beams: 50             # Number of horizontal beams
@@ -45,6 +38,23 @@ env:
   beam_thickness_range: [0.5, 1.0]  # Beam thickness range (m)
   beam_height_range: [0.5, 3.5]     # Beam height above ground (m)
   # ==================== whole-body ====================
+
+  # ==================== curriculum (reward weights) ====================
+  curriculum_total_steps: 1_000_000   # Total effective steps to reach p=1.0
+  curriculum_step_divisor: 1.0        # Divide raw env steps to slow progression if needed
+
+  curriculum_r1_steps: 10000        # e.g., 0.05 * total_train_steps (set to 0 to start ramp right away)
+  curriculum_r2_steps: 40000    # e.g., match your typical 50k-step training run
+
+  # Linear schedules for weights: w = start + (end - start) * p
+  vel_weight_start: 2.5
+  vel_weight_end: 1.2
+  safety_weight_start: 0.5
+  safety_weight_end: 1.5
+  safety_dyn_weight_start: 0.5   # if dynamic obstacles enabled; defaults to safety_weight_* if absent
+  safety_dyn_weight_end: 1.5
+  curriculum_log_interval: 1000   # Log p and weights every N steps during training (<=0 disables)
+  # ======================================================
 
 env_dyn:
   num_obstacles: 80 # set to zero if static env is needed

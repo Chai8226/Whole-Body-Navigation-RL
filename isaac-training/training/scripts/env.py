@@ -48,6 +48,16 @@ class NavigationEnv(IsaacEnv):
 
 
         # LiDAR Intialization
+        # extend vertical angles with +/-90 deg layers
+        self.vertical_ray_angles_deg = torch.cat(
+            [
+                torch.tensor([-90.0]),
+                torch.linspace(*self.lidar_vfov, self.lidar_vbeams),
+                torch.tensor([90.0]),
+            ]
+        )
+        self.lidar_vbeams_ext = self.lidar_vbeams + 2
+
         ray_caster_cfg = RayCasterCfg(
             prim_path="/World/envs/env_.*/Hummingbird_0/base_link",
             offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0)),
@@ -55,14 +65,14 @@ class NavigationEnv(IsaacEnv):
             # attach_yaw_only=False,
             pattern_cfg=patterns.BpearlPatternCfg(
                 horizontal_res=self.lidar_hres, # horizontal default is set to 10
-                vertical_ray_angles=torch.linspace(*self.lidar_vfov, self.lidar_vbeams) 
+                vertical_ray_angles=self.vertical_ray_angles_deg
             ),
             debug_vis=False,
             mesh_prim_paths=["/World/ground"],
         )
         self.lidar = RayCaster(ray_caster_cfg)
         self.lidar._initialize_impl()
-        self.lidar_resolution = (self.lidar_hbeams, self.lidar_vbeams)
+        self.lidar_resolution = (self.lidar_hbeams, self.lidar_vbeams_ext)
         
         # ==================== whole-body shape scan ====================
         # Compute robot shape scan: distance from center to surface along each ray
@@ -91,14 +101,14 @@ class NavigationEnv(IsaacEnv):
             shape_name: Name of the OBJ file (without .obj extension)
             
         Returns:
-            torch.Tensor: Shape scan with dimensions (1, lidar_hbeams, lidar_vbeams)
+            torch.Tensor: Shape scan with dimensions (1, lidar_hbeams, lidar_vbeams_ext)
         """
         obj_folder = os.path.join(os.path.dirname(__file__), "..", "obj")
         obj_file = os.path.join(obj_folder, f"{shape_name}.obj")
         
         if not os.path.exists(obj_file):
             print(f"OBJ file not found: {obj_file}, using zero shape scan")
-            return torch.zeros(1, self.lidar_hbeams, self.lidar_vbeams, device=self.device)
+            return torch.zeros(1, self.lidar_hbeams, self.lidar_vbeams_ext, device=self.device)
         
         # Parse OBJ file to get vertices and faces
         vertices = []
@@ -116,7 +126,7 @@ class NavigationEnv(IsaacEnv):
         
         if not vertices or not faces:
             print(f"Invalid OBJ file: {obj_file}, using zero shape scan")
-            return torch.zeros(1, self.lidar_hbeams, self.lidar_vbeams, device=self.device)
+            return torch.zeros(1, self.lidar_hbeams, self.lidar_vbeams_ext, device=self.device)
         
         vertices = np.array(vertices)
         faces = np.array(faces)
@@ -124,10 +134,10 @@ class NavigationEnv(IsaacEnv):
         # Generate ray directions matching the LiDAR pattern
         # Horizontal angles: 0 to 360 degrees
         horizontal_angles = np.linspace(0, 2 * np.pi, self.lidar_hbeams, endpoint=False)
-        # Vertical angles: from lidar_vfov
-        vertical_angles = np.deg2rad(np.linspace(self.lidar_vfov[0], self.lidar_vfov[1], self.lidar_vbeams))
+        # Vertical angles: use extended list including +/-90 deg
+        vertical_angles = np.deg2rad(self.vertical_ray_angles_deg.cpu().numpy())
         
-        shape_distances = np.zeros((self.lidar_hbeams, self.lidar_vbeams))
+        shape_distances = np.zeros((self.lidar_hbeams, self.lidar_vbeams_ext))
         
         # For each ray direction, compute intersection with robot mesh
         for h_idx, h_angle in enumerate(horizontal_angles):
@@ -152,7 +162,7 @@ class NavigationEnv(IsaacEnv):
         
         # Convert to torch tensor
         shape_scan = torch.tensor(shape_distances, dtype=torch.float32, device=self.device)
-        shape_scan = shape_scan.unsqueeze(0)  # Add batch dimension: (1, H, V)
+        shape_scan = shape_scan.unsqueeze(0)  # Add batch dimension: (1, H, Vext)
         
         print(f"Shape scan statistics - min: {shape_scan.min():.4f}, max: {shape_scan.max():.4f}, mean: {shape_scan.mean():.4f}")
         
@@ -167,8 +177,8 @@ class NavigationEnv(IsaacEnv):
             shape_scan=shape_scan.cpu().numpy(),
             shape_name=shape_name,
             lidar_hbeams=self.lidar_hbeams,
-            lidar_vbeams=self.lidar_vbeams,
-            lidar_vfov=self.lidar_vfov,
+            lidar_vbeams=self.lidar_vbeams_ext,
+            lidar_vfov=(-90.0, 90.0),
             horizontal_angles=horizontal_angles,
             vertical_angles=vertical_angles,
         )
@@ -568,11 +578,11 @@ class NavigationEnv(IsaacEnv):
             "agents": CompositeSpec({
                 "observation": CompositeSpec({
                     "state": UnboundedContinuousTensorSpec((observation_dim,), device=self.device), 
-                    "lidar": UnboundedContinuousTensorSpec((1, self.lidar_hbeams, self.lidar_vbeams), device=self.device),
+                    "lidar": UnboundedContinuousTensorSpec((1, self.lidar_hbeams, self.lidar_vbeams_ext), device=self.device),
                     "direction": UnboundedContinuousTensorSpec((1, 3), device=self.device),
                     "dynamic_obstacle": UnboundedContinuousTensorSpec((1, self.cfg.algo.feature_extractor.dyn_obs_num, num_dim_each_dyn_obs_state), device=self.device),
                     # ==================== whole-body ====================
-                    "shape_scan": UnboundedContinuousTensorSpec((1, self.lidar_hbeams, self.lidar_vbeams), device=self.device),
+                    "shape_scan": UnboundedContinuousTensorSpec((1, self.lidar_hbeams, self.lidar_vbeams_ext), device=self.device),
                     # ====================================================
                 }),
             }).expand(self.num_envs)
@@ -805,12 +815,12 @@ class NavigationEnv(IsaacEnv):
             two_pi = torch.tensor(2.0 * np.pi, device=self.device)
             phi = torch.remainder(phi + two_pi, two_pi)
             H = self.lidar_hbeams
-            V = self.lidar_vbeams
+            V = self.lidar_vbeams_ext
             # vertical angle in radians
             v_angle = torch.atan2(dir_vec[..., 2], torch.norm(dir_vec[..., :2], dim=-1))
             deg = v_angle * (180.0 / np.pi)
-            vfov_min = float(self.lidar_vfov[0])
-            vfov_max = float(self.lidar_vfov[1])
+            vfov_min = -90.0
+            vfov_max = 90.0
             # map angles to discrete beam indices
             h_idx = torch.round(phi / two_pi * (H)).long() % H
             v_idx = torch.round((deg - vfov_min) / max(vfov_max - vfov_min, 1e-6) * (V - 1)).clamp(0, V - 1).long()

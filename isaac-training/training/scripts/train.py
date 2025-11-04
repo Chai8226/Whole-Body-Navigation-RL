@@ -102,22 +102,22 @@ def main(cfg):
             info.update(stats)
 
         # Evaluate policy and log info
-        if i % cfg.eval_interval == 0:
-            print("[NavRL]: start evaluating policy at training step: ", i)
-            env.enable_render(True)
-            env.eval()
-            eval_info = evaluate(
-                env=transformed_env, 
-                policy=policy,
-                seed=cfg.seed, 
-                cfg=cfg,
-                exploration_type=ExplorationType.MEAN
-            )
-            env.enable_render(not cfg.headless)
-            env.train()
-            env.reset()
-            info.update(eval_info)
-            print("\n[NavRL]: evaluation done.")
+        # if i % cfg.eval_interval == 0:
+        #     print("[NavRL]: start evaluating policy at training step: ", i)
+        #     env.enable_render(True)
+        #     env.eval()
+        #     eval_info = evaluate(
+        #         env=transformed_env, 
+        #         policy=policy,
+        #         seed=cfg.seed, 
+        #         cfg=cfg,
+        #         exploration_type=ExplorationType.MEAN
+        #     )
+        #     env.enable_render(not cfg.headless)
+        #     env.train()
+        #     env.reset()
+        #     info.update(eval_info)
+        #     print("\n[NavRL]: evaluation done.")
         
         # Update wand info
         run.log(info)

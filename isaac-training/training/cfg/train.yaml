@@ -21,9 +21,16 @@ env:
   num_obstacles: 200
 
   # ==================== whole-body ====================
+  # Flight height constraints
+  min_flight_height: 0.5         # Minimum allowed flight height (m)
+  max_flight_height: 3.5         # Maximum allowed flight height (m)
+  height_penalty_deadzone: 0.2   # Buffer zone before penalty applies (m)
+  height_penalty_weight: 8.0     # Weight of height penalty in reward function
+  height_penalty_huber_delta: 0.5 # Huber loss delta: transition point from L2 to L1 (m)
+  
   # Static horizontal beams configuration
   num_static_beams: 50             # Number of horizontal beams
-  beam_length_range: [1.0, 10.0]    # Beam length range (m)cfdon
+  beam_length_range: [1.0, 10.0]    # Beam length range (m)
   beam_thickness_range: [0.5, 1.0]  # Beam thickness range (m)
   beam_height_range: [0.5, 3.5]     # Beam height above ground (m)
   # ==================== whole-body ====================

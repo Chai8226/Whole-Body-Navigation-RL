@@ -684,11 +684,16 @@ class NavigationEnv(IsaacEnv):
         self.drone.set_world_poses(pos, rot, env_ids)
         self.drone.set_velocities(self.init_vels[env_ids], env_ids)
         self.prev_drone_vel_w[env_ids] = 0.
-        self.height_range[env_ids, 0, 0] = torch.min(pos[:, 0, 2], self.target_pos[env_ids, 0, 2])
-        self.height_range[env_ids, 0, 1] = torch.max(pos[:, 0, 2], self.target_pos[env_ids, 0, 2])
 
-        self.stats[env_ids] = 0.  
- 
+        # ==================== whole-body ====================
+        min_flight_height = getattr(self.cfg.env, "min_flight_height", 0.5)
+        max_flight_height = getattr(self.cfg.env, "max_flight_height", 4.0)
+        self.height_range[env_ids, 0, 0] = min_flight_height
+        self.height_range[env_ids, 0, 1] = max_flight_height
+        # ==================== whole-body ====================
+
+        self.stats[env_ids] = 0.
+
     def _pre_sim_step(self, tensordict: TensorDictBase):
         actions = tensordict[("agents", "action")]
         self.drone.apply_action(actions)
@@ -898,11 +903,28 @@ class NavigationEnv(IsaacEnv):
         # d. smoothness reward for action smoothness
         penalty_smooth = (self.drone.vel_w[..., :3] - self.prev_drone_vel_w).norm(dim=-1)
 
+        # ==================== whole-body ====================
+        # e. height penalty reward for flying unnecessarily high or low
+        # Using Huber loss for better gradient stability and training dynamics
+        height_deadzone = getattr(self.cfg.env, "height_penalty_deadzone", 0.2)
+        huber_delta = getattr(self.cfg.env, "height_penalty_huber_delta", 0.5)
         
-        # e. height penalty reward for flying unnessarily high or low
-        penalty_height = torch.zeros(self.num_envs, 1, device=self.cfg.device)
-        penalty_height[self.drone.pos[..., 2] > (self.height_range[..., 1] + 0.2)] = ( (self.drone.pos[..., 2] - self.height_range[..., 1] - 0.2)**2 )[self.drone.pos[..., 2] > (self.height_range[..., 1] + 0.2)]
-        penalty_height[self.drone.pos[..., 2] < (self.height_range[..., 0] - 0.2)] = ( (self.height_range[..., 0] - 0.2 - self.drone.pos[..., 2])**2 )[self.drone.pos[..., 2] < (self.height_range[..., 0] - 0.2)]
+        # Compute height violations
+        drone_height = self.drone.pos[..., 2]
+        upper_violation = torch.clamp(drone_height - (self.height_range[..., 1] + height_deadzone), min=0.0)
+        lower_violation = torch.clamp((self.height_range[..., 0] - height_deadzone) - drone_height, min=0.0)
+        
+        # Huber loss: smooth L1 that transitions from quadratic to linear
+        # For |x| <= delta: loss = 0.5 * x²
+        # For |x| > delta: loss = delta * (|x| - 0.5 * delta)
+        def huber_loss(x, delta):
+            abs_x = torch.abs(x)
+            quadratic = torch.where(abs_x <= delta, 0.5 * x**2, torch.zeros_like(x))
+            linear = torch.where(abs_x > delta, delta * (abs_x - 0.5 * delta), torch.zeros_like(x))
+            return quadratic + linear
+        
+        penalty_height = huber_loss(upper_violation, huber_delta) + huber_loss(lower_violation, huber_delta)
+        # ==================== whole-body ====================
 
 
         # f. Collision condition with its penalty
@@ -929,10 +951,13 @@ class NavigationEnv(IsaacEnv):
         
         # ==================== whole-body shape scan ====================
         # Final reward calculation
+        # Get reward weights from config (with defaults)
+        height_penalty_weight = getattr(self.cfg.env, "height_penalty_weight", 8.0)
+        
         if (self.cfg.env_dyn.num_obstacles != 0):
-            self.reward = reward_vel * 1.5 + 1. + reward_safety_static * 1.5 + reward_safety_dynamic * 1.5 - penalty_smooth * 0.1 - penalty_height * 8.0
+            self.reward = reward_vel * 1.5 + 1. + reward_safety_static * 1.5 + reward_safety_dynamic * 1.5 - penalty_smooth * 0.1 - penalty_height * height_penalty_weight
         else:
-            self.reward = reward_vel * 1.5 + 1. + reward_safety_static * 1.5 - penalty_smooth * 0.1 - penalty_height * 8.0
+            self.reward = reward_vel * 1.5 + 1. + reward_safety_static * 1.5 - penalty_smooth * 0.1 - penalty_height * height_penalty_weight
         
         # ==================== whole-body shape scan ====================
         

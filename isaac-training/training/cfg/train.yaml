@@ -31,6 +31,12 @@ env:
   # Safety reward parameters (exponential form: λ(1 - e^(-k*d²)))
   safety_reward_lambda: 1.0      # Maximum reward value at infinite distance
   safety_reward_k: 0.5           # Decay rate: larger k = faster saturation
+  goal_reached_reward: 20.0        # Bonus reward for reaching the goal
+  curriculum:
+    start_steps: 2e6             # Steps to start curriculum
+    end_steps: 10e6              # Steps to end curriculum
+    goal_weight: [2.5, 1.5]      # [start, end] weights for goal-progress reward
+    safety_weight: [0.5, 1.5]    # [start, end] weights for safety reward
   
   # Static horizontal beams configuration
   num_static_beams: 50             # Number of horizontal beams

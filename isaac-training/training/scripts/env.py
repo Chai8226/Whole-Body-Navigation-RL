@@ -72,11 +72,11 @@ class NavigationEnv(IsaacEnv):
         self.lidar._initialize_impl()
         self.lidar_resolution = (self.lidar_hbeams, self.lidar_vbeams_ext)
         
-        # ==================== whole-body shape scan ====================
+        # ==================== whole-body ====================
         # Compute robot shape scan: distance from center to surface along each ray
         self.shape_scan = self._compute_shape_scan(cfg.drone.marker.shape)
         print(f"Computed shape_scan with shape: {self.shape_scan.shape}")
-        # ==================== whole-body shape scan ====================
+        # ==================== whole-body ====================
 
         # start and target
         with torch.device(self.device):
@@ -89,6 +89,15 @@ class NavigationEnv(IsaacEnv):
             # Track previous distance to goal for forward-progress reward
             self.prev_goal_distance = torch.zeros(self.num_envs, 1, 1)
 
+            # ==================== whole-body ====================
+            self.total_steps = 0
+            curriculum_cfg = self.cfg.env.curriculum
+            self.curriculum_start_steps = curriculum_cfg.start_steps
+            self.curriculum_end_steps = curriculum_cfg.end_steps
+            self.goal_weight_range = curriculum_cfg.goal_weight
+            self.safety_weight_range = curriculum_cfg.safety_weight
+            print(f"[Curriculum Learning]: Weights will shift from {self.curriculum_start_steps/1e6:.1f}M to {self.curriculum_end_steps/1e6:.1f}M steps.")
+            # ===========================================================
    
     # ==================== whole-body ====================
     def _compute_shape_scan(self, shape_name):
@@ -965,33 +974,69 @@ class NavigationEnv(IsaacEnv):
         
         collision = static_collision | dynamic_collision
         
-        # ==================== whole-body shape scan ====================
+        # ==================== whole-body ====================
         # Final reward calculation
         # Get reward weights from config (with defaults)
         height_penalty_weight = getattr(self.cfg.env, "height_penalty_weight", 8.0)
+
+        # Linearly interpolate weights based on training progress
+        progress = (self.total_steps - self.curriculum_start_steps) / max(1, self.curriculum_end_steps - self.curriculum_start_steps)
+        progress = torch.clamp(torch.tensor(progress, device=self.device), 0.0, 1.0)
+
+        # Start with high goal reward, low safety reward
+        # End with balanced or higher safety reward
+        goal_reward_weight = torch.lerp(
+            torch.tensor(self.goal_weight_range[0], device=self.device),
+            torch.tensor(self.goal_weight_range[1], device=self.device),
+            progress
+        )
+        safety_reward_weight = torch.lerp(
+            torch.tensor(self.safety_weight_range[0], device=self.device),
+            torch.tensor(self.safety_weight_range[1], device=self.device),
+            progress
+        )
         
+        if self.progress_buf[0] % 1000 == 0:
+             print(f"[Curriculum]: Steps: {self.total_steps/1e6:.2f}M, Progress: {progress.item():.2f}, Goal Weight: {goal_reward_weight:.2f}, Safety Weight: {safety_reward_weight:.2f}")
+
         if (self.cfg.env_dyn.num_obstacles != 0):
-            self.reward = reward_goal_distance * 1.5 + 1. + reward_safety_static * 1.5 + reward_safety_dynamic * 1.5 - penalty_smooth * 0.1 - penalty_height * height_penalty_weight
+            self.reward = (
+                reward_goal_distance * goal_reward_weight 
+                + reward_safety_static * safety_reward_weight 
+                + reward_safety_dynamic * safety_reward_weight 
+                - penalty_smooth * 0.1 
+                - penalty_height * height_penalty_weight
+            )
         else:
-            self.reward = reward_goal_distance * 1.5 + 1. + reward_safety_static * 1.5 - penalty_smooth * 0.1 - penalty_height * height_penalty_weight
-        
-        # ==================== whole-body shape scan ====================
+            self.reward = (
+                reward_goal_distance * goal_reward_weight
+                + reward_safety_static * safety_reward_weight
+                - penalty_smooth * 0.1
+                - penalty_height * height_penalty_weight
+            )
+        # ==================== whole-body ====================
         
 
         # Terminate Conditions
         reach_goal = (distance.squeeze(-1) < 0.5)
+        
+        # ==================== whole-body ====================
+        goal_reached_reward = getattr(self.cfg.env, "goal_reached_reward", 20.0)
+        self.reward += torch.where(reach_goal, goal_reached_reward, 0.0)
+        # ============================================================
+
         below_bound = self.drone.pos[..., 2] < 0.2
         above_bound = self.drone.pos[..., 2] > 4.
         self.terminated = below_bound | above_bound | collision
         
         self.truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1) # progress buf is to track the step number
 
-        # update previous velocity for smoothness calculation in the next iteration
+        # update total steps for curriculum learning
+        self.total_steps += self.num_envs
         self.prev_drone_vel_w = self.drone.vel_w[..., :3].clone()
-        # update previous goal distance for forward-progress reward
         self.prev_goal_distance = distance.clone()
 
-        # # -----------------Training Stats-----------------
+        # -----------------Training Stats-----------------
         self.stats["return"] += self.reward
         self.stats["episode_len"][:] = self.progress_buf.unsqueeze(1)
         self.stats["reach_goal"] = reach_goal.float()

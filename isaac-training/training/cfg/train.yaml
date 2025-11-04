@@ -23,7 +23,7 @@ env:
   # ==================== whole-body ====================
   # Static horizontal beams configuration
   num_static_beams: 50             # Number of horizontal beams
-  beam_length_range: [1.0, 10.0]    # Beam length range (m)
+  beam_length_range: [1.0, 10.0]    # Beam length range (m)cfdon
   beam_thickness_range: [0.5, 1.0]  # Beam thickness range (m)
   beam_height_range: [0.5, 3.5]     # Beam height above ground (m)
   # ==================== whole-body ====================

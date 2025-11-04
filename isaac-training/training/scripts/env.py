@@ -322,6 +322,7 @@ class NavigationEnv(IsaacEnv):
         # Add horizontal beams to the terrain mesh so LiDAR can detect them
         import trimesh
         from pxr import UsdGeom
+        from pxr import Vt
         
         num_beams = int(getattr(self.cfg.env, "num_static_beams", 12))
         beam_len_range = tuple(getattr(self.cfg.env, "beam_length_range", [2.0, 6.0]))
@@ -397,7 +398,6 @@ class NavigationEnv(IsaacEnv):
                     existing_face_counts.append(4)
             
             # Update the terrain mesh with new geometry
-            from pxr import Vt
             terrain_mesh_prim.GetPointsAttr().Set(Vt.Vec3fArray(existing_points))
             terrain_mesh_prim.GetFaceVertexCountsAttr().Set(existing_face_counts)
             terrain_mesh_prim.GetFaceVertexIndicesAttr().Set(existing_face_indices)

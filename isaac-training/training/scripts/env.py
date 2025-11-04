@@ -96,6 +96,8 @@ class NavigationEnv(IsaacEnv):
             self.curriculum_end_steps = curriculum_cfg.end_steps
             self.goal_weight_range = curriculum_cfg.goal_weight
             self.safety_weight_range = curriculum_cfg.safety_weight
+            # count_mode: "step" (per env step) or "frame" (per-step x num_envs)
+            self.curriculum_count_mode = getattr(curriculum_cfg, "count_mode", "step")
             print(f"[Curriculum Learning]: Weights will shift from {self.curriculum_start_steps/1e6:.1f}M to {self.curriculum_end_steps/1e6:.1f}M steps.")
             # ===========================================================
    
@@ -1031,8 +1033,14 @@ class NavigationEnv(IsaacEnv):
         
         self.truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1) # progress buf is to track the step number
 
-        # update total steps for curriculum learning
-        self.total_steps += self.num_envs
+        # update total steps for curriculum learning (training only)
+        if self.training:
+            if self.curriculum_count_mode == "frame":
+                # count every environment frame (parallel envs multiplied)
+                self.total_steps += self.num_envs
+            else:
+                # default: count per env step (independent of num_envs)
+                self.total_steps += 1
         self.prev_drone_vel_w = self.drone.vel_w[..., :3].clone()
         self.prev_goal_distance = distance.clone()
 

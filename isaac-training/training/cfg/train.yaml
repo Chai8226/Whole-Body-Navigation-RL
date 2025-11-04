@@ -35,6 +35,7 @@ env:
   curriculum:
     start_steps: 1e4             # Steps to start curriculum
     end_steps: 4e4               # Steps to end curriculum
+    count_mode: step             # step: per env step; frame: per-step x num_envs
     goal_weight: [2.5, 1.5]      # [start, end] weights for goal-progress reward
     safety_weight: [0.5, 1.5]    # [start, end] weights for safety reward
   

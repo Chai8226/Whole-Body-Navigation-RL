@@ -86,6 +86,8 @@ class NavigationEnv(IsaacEnv):
             self.target_dir = torch.zeros(self.num_envs, 1, 3)
             self.height_range = torch.zeros(self.num_envs, 1, 2)
             self.prev_drone_vel_w = torch.zeros(self.num_envs, 1 , 3)
+            # Track previous distance to goal for forward-progress reward
+            self.prev_goal_distance = torch.zeros(self.num_envs, 1, 1)
 
    
     # ==================== whole-body ====================
@@ -693,6 +695,10 @@ class NavigationEnv(IsaacEnv):
         self.drone.set_velocities(self.init_vels[env_ids], env_ids)
         self.prev_drone_vel_w[env_ids] = 0.
 
+        # Initialize previous goal distance at reset so the first step reward is well-defined
+        dist0 = (self.target_pos[env_ids] - pos).norm(dim=-1, keepdim=True)
+        self.prev_goal_distance[env_ids] = dist0
+
         # ==================== whole-body ====================
         min_flight_height = getattr(self.cfg.env, "min_flight_height", 0.5)
         max_flight_height = getattr(self.cfg.env, "max_flight_height", 4.0)
@@ -734,12 +740,7 @@ class NavigationEnv(IsaacEnv):
             print(f"[DEBUG] ray_distances - min: {ray_distances.min().item():.4f}, max: {ray_distances.max().item():.4f}, mean: {ray_distances.mean().item():.4f}")
             print(f"[DEBUG] shape_scan - min: {self.shape_scan.min().item():.4f}, max: {self.shape_scan.max().item():.4f}, mean: {self.shape_scan.mean().item():.4f}")
         
-        # Step 2: Calculate clearance from robot surface to obstacle
-        # clearance = distance_from_center - robot_radius_in_that_direction
         clearance = (ray_distances - self.shape_scan).clamp(min=0.0)
-        
-        # Step 3: Convert to "remaining distance" format for compatibility with existing code
-        # lidar_scan represents "free space" where larger values = more clearance
         self.lidar_scan = clearance
         
         if self.progress_buf[0] == 0:
@@ -911,12 +912,12 @@ class NavigationEnv(IsaacEnv):
             clearance_dyn_squared = closest_dyn_obs_clearance_reward ** 2
             reward_safety_dynamic = safety_lambda * (1.0 - torch.exp(-safety_k * clearance_dyn_squared))
             reward_safety_dynamic = reward_safety_dynamic.mean(dim=-1, keepdim=True)
-        # ==================== whole-body ====================
 
-        # c. velocity reward for goal direction
-        vel_direction = rpos / distance.clamp_min(1e-6)
-        reward_vel = (self.drone.vel_w[..., :3] * vel_direction).sum(-1)#.clip(max=2.0)
-        
+        # ==================== whole-body ====================
+        # c. forward-progress reward based on distance reduction
+        # r_forward = |p_goal - p| - |p_goal - p_last|
+        reward_goal_distance = (self.prev_goal_distance - distance).squeeze(-1)
+
         # d. smoothness reward for action smoothness
         penalty_smooth = (self.drone.vel_w[..., :3] - self.prev_drone_vel_w).norm(dim=-1)
 
@@ -970,9 +971,9 @@ class NavigationEnv(IsaacEnv):
         height_penalty_weight = getattr(self.cfg.env, "height_penalty_weight", 8.0)
         
         if (self.cfg.env_dyn.num_obstacles != 0):
-            self.reward = reward_vel * 1.5 + 1. + reward_safety_static * 1.5 + reward_safety_dynamic * 1.5 - penalty_smooth * 0.1 - penalty_height * height_penalty_weight
+            self.reward = reward_goal_distance * 1.5 + 1. + reward_safety_static * 1.5 + reward_safety_dynamic * 1.5 - penalty_smooth * 0.1 - penalty_height * height_penalty_weight
         else:
-            self.reward = reward_vel * 1.5 + 1. + reward_safety_static * 1.5 - penalty_smooth * 0.1 - penalty_height * height_penalty_weight
+            self.reward = reward_goal_distance * 1.5 + 1. + reward_safety_static * 1.5 - penalty_smooth * 0.1 - penalty_height * height_penalty_weight
         
         # ==================== whole-body shape scan ====================
         
@@ -987,6 +988,8 @@ class NavigationEnv(IsaacEnv):
 
         # update previous velocity for smoothness calculation in the next iteration
         self.prev_drone_vel_w = self.drone.vel_w[..., :3].clone()
+        # update previous goal distance for forward-progress reward
+        self.prev_goal_distance = distance.clone()
 
         # # -----------------Training Stats-----------------
         self.stats["return"] += self.reward

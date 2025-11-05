@@ -94,10 +94,19 @@ def visualize_3d(shape_scan, horizontal_angles, vertical_angles, vertices=None, 
         # Plot vertices as small points
         ax1.scatter(vertices[:, 0], vertices[:, 1], vertices[:, 2], 
                    c='blue', s=5, alpha=0.5, label='OBJ vertices')
+
+        # Annotate each vertex with its index (small, semi-transparent)
+        for vidx, v in enumerate(vertices):
+            x, y, z = v
+            # 3D plot annotation (offset slightly to reduce overlap with point)
+            ax1.text(x, y, z, f"{vidx}", fontsize=6, color='black', alpha=0.6)
     
     # Plot shape_scan points on top
-    scatter = ax1.scatter(points[:, 0], points[:, 1], points[:, 2], 
-                         c=colors, cmap='hot', s=3, alpha=0.8, label='Shape scan')
+    scatter = ax1.scatter(
+        points[:, 0], points[:, 1], points[:, 2],
+        c=colors, cmap='hot', s=12, alpha=0.9, label='Shape scan',
+        edgecolors='k', linewidths=0.2
+    )
     ax1.set_xlabel('X (m)')
     ax1.set_ylabel('Y (m)')
     ax1.set_zlabel('Z (m)')
@@ -120,7 +129,15 @@ def visualize_3d(shape_scan, horizontal_angles, vertical_angles, vertices=None, 
     ax2 = fig.add_subplot(132)
     if vertices is not None:
         ax2.scatter(vertices[:, 0], vertices[:, 1], c='blue', s=5, alpha=0.3, label='OBJ')
-    ax2.scatter(points[:, 0], points[:, 1], c=colors, cmap='hot', s=3, alpha=0.8, label='Scan')
+        # Annotate top-view vertex indices
+        for vidx, v in enumerate(vertices):
+            x, y = v[0], v[1]
+            ax2.text(x, y, f"{vidx}", fontsize=6, alpha=0.6)
+    ax2.scatter(
+        points[:, 0], points[:, 1],
+        c=colors, cmap='hot', s=10, alpha=0.9, label='Scan',
+        edgecolors='k', linewidths=0.2
+    )
     ax2.set_xlabel('X (m)')
     ax2.set_ylabel('Y (m)')
     ax2.set_title('Top View (XY)')
@@ -132,7 +149,15 @@ def visualize_3d(shape_scan, horizontal_angles, vertical_angles, vertices=None, 
     ax3 = fig.add_subplot(133)
     if vertices is not None:
         ax3.scatter(vertices[:, 0], vertices[:, 2], c='blue', s=5, alpha=0.3, label='OBJ')
-    ax3.scatter(points[:, 0], points[:, 2], c=colors, cmap='hot', s=3, alpha=0.8, label='Scan')
+        # Annotate side-view (XZ) vertex indices
+        for vidx, v in enumerate(vertices):
+            x, z = v[0], v[2]
+            ax3.text(x, z, f"{vidx}", fontsize=6, alpha=0.6)
+    ax3.scatter(
+        points[:, 0], points[:, 2],
+        c=colors, cmap='hot', s=10, alpha=0.9, label='Scan',
+        edgecolors='k', linewidths=0.2
+    )
     ax3.set_xlabel('X (m)')
     ax3.set_ylabel('Z (m)')
     ax3.set_title('Side View (XZ)')

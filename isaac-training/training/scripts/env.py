@@ -888,20 +888,19 @@ class NavigationEnv(IsaacEnv):
         optimal_height = self.target_pos[..., 2]  # (num_envs, 1)
         height_sigma = getattr(self.cfg.env, "height_reward_sigma", 0.5)
         
-        drone_height = self.drone.pos[..., 2]  # (num_envs,)
-        height_diff = drone_height - optimal_height.squeeze(-1)  # (num_envs,)
-        reward_height_pref = torch.exp(-0.5 * (height_diff / height_sigma) ** 2)
-        min_h = self.height_range[..., 0, 0]  # (num_envs,)
-        max_h = self.height_range[..., 0, 1]  # (num_envs,)
-        out_of_bounds_lower = torch.clamp(min_h - drone_height, min=0.0)
-        out_of_bounds_upper = torch.clamp(drone_height - max_h, min=0.0)
-        penalty_out_of_bounds = out_of_bounds_lower**2 + out_of_bounds_upper**2
+        drone_height = self.drone.pos[..., 2:3]  # (num_envs, 1)
+        height_diff = drone_height - optimal_height  # (num_envs, 1)
+        reward_height_pref = torch.exp(-0.5 * (height_diff / height_sigma) ** 2)  # (num_envs, 1)
+        min_h = self.height_range[..., 0:1, 0]  # (num_envs, 1)
+        max_h = self.height_range[..., 0:1, 1]  # (num_envs, 1)
+        out_of_bounds_lower = torch.clamp(min_h - drone_height, min=0.0)  # (num_envs, 1)
+        out_of_bounds_upper = torch.clamp(drone_height - max_h, min=0.0)  # (num_envs, 1)
+        penalty_out_of_bounds = out_of_bounds_lower**2 + out_of_bounds_upper**2  # (num_envs, 1)
         
         # Combine preference and penalty into a single height reward term
         height_reward_weight = getattr(self.cfg.env, "height_reward_weight", 1.0)
         height_penalty_weight = getattr(self.cfg.env, "height_penalty_weight", 4.0)
-        reward_height = torch.zeros(self.num_envs, 1, device=self.device)
-        reward_height[:, 0] = reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight  # (num_envs, 1)
+        reward_height = reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight  # (num_envs, 1)
         # ==================== whole-body ====================
 
 

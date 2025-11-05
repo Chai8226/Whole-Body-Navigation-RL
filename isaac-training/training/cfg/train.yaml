@@ -31,6 +31,11 @@ env:
   # Safety reward parameters (exponential form: λ(1 - e^(-k*d²)))
   safety_reward_lambda: 1.0      # Maximum reward value at infinite distance
   safety_reward_k: 0.5           # Decay rate: larger k = faster saturation
+
+  # Reach-goal bonus (one-time per episode)
+  reach_goal_distance_threshold: 0.5  # meters, within this distance counts as goal reached
+  reach_goal_bonus: 20.0              # scalar bonus added once when first reaching goal in an episode
+  terminate_on_reach_goal: false      # whether to terminate the episode immediately upon reaching goal
   
   # Static horizontal beams configuration
   num_static_beams: 50             # Number of horizontal beams
@@ -42,17 +47,16 @@ env:
   # ==================== whole-body curriculum (reward weights) ====================
   curriculum_total_steps: 1_000_000   # Total effective steps to reach p=1.0
   curriculum_step_divisor: 1.0        # Divide raw env steps to slow progression if needed
-
-  curriculum_r1_steps: 10000        # e.g., 0.05 * total_train_steps (set to 0 to start ramp right away)
-  curriculum_r2_steps: 40000    # e.g., match your typical 50k-step training run
+  curriculum_r1_steps: 10000       
+  curriculum_r2_steps: 40000    
 
   # Linear schedules for weights: w = start + (end - start) * p
   vel_weight_start: 2.5
-  vel_weight_end: 1.2
+  vel_weight_end: 1.5
   safety_weight_start: 0.5
-  safety_weight_end: 1.5
+  safety_weight_end: 1.0
   safety_dyn_weight_start: 0.5   # if dynamic obstacles enabled; defaults to safety_weight_* if absent
-  safety_dyn_weight_end: 1.5
+  safety_dyn_weight_end: 1.0
   curriculum_log_interval: 1000   # Log p and weights every N steps during training (<=0 disables)
   curriculum_freeze_in_eval: true  # Do not advance curriculum_step during evaluation episodes
   # ======================================================

@@ -90,6 +90,8 @@ class NavigationEnv(IsaacEnv):
             self.target_dir = torch.zeros(self.num_envs, 1, 3)
             self.height_range = torch.zeros(self.num_envs, 1, 2)
             self.prev_drone_vel_w = torch.zeros(self.num_envs, 1 , 3)
+            # Track goal reach per episode (for one-time bonus)
+            self.reached_goal = torch.zeros(self.num_envs, 1, dtype=torch.bool, device=self.device)
 
    
     # ==================== whole-body ====================
@@ -704,6 +706,8 @@ class NavigationEnv(IsaacEnv):
         # ==================== whole-body ====================
 
         self.stats[env_ids] = 0.
+        # reset reach-goal flags for new episodes
+        self.reached_goal[env_ids] = False
 
     def _pre_sim_step(self, tensordict: TensorDictBase):
         actions = tensordict[("agents", "action")]
@@ -1045,12 +1049,19 @@ class NavigationEnv(IsaacEnv):
         # ==================== whole-body shape scan ====================
         
 
-        # Terminate Conditions
-        reach_goal = (distance.squeeze(-1) < 0.5)
+        # Terminate Conditions & reach-goal bonus
+        goal_threshold = float(getattr(self.cfg.env, "reach_goal_distance_threshold", 0.5))
+        reach_goal = (distance.squeeze(-1) < goal_threshold)
+        newly_reached = reach_goal & (~self.reached_goal.squeeze(-1))
+        self.reached_goal = self.reached_goal | reach_goal.unsqueeze(-1)
+        reach_bonus_value = float(getattr(self.cfg.env, "reach_goal_bonus", 20.0))
+        reach_bonus = newly_reached.float() * reach_bonus_value
+        self.reward = self.reward + reach_bonus
+
         below_bound = self.drone.pos[..., 2] < 0.2
         above_bound = self.drone.pos[..., 2] > 4.
-        self.terminated = below_bound | above_bound | collision
-        
+        terminate_on_goal = bool(getattr(self.cfg.env, "terminate_on_reach_goal", False))
+        self.terminated = below_bound | above_bound | collision | (reach_goal if terminate_on_goal else False)
         self.truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1) # progress buf is to track the step number
 
         # update previous velocity for smoothness calculation in the next iteration

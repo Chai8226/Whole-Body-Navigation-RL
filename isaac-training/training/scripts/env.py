@@ -89,8 +89,6 @@ class NavigationEnv(IsaacEnv):
             self.target_dir = torch.zeros(self.num_envs, 1, 3)
             self.height_range = torch.zeros(self.num_envs, 1, 2)
             self.prev_drone_vel_w = torch.zeros(self.num_envs, 1 , 3)
-            # Track goal reach per episode (for one-time bonus)
-            self.reached_goal = torch.zeros(self.num_envs, 1, dtype=torch.bool, device=self.device)
 
    
     # ==================== whole-body ====================
@@ -705,8 +703,6 @@ class NavigationEnv(IsaacEnv):
         # ==================== whole-body ====================
 
         self.stats[env_ids] = 0.
-        # reset reach-goal flags for new episodes
-        self.reached_goal[env_ids] = False
 
     def _pre_sim_step(self, tensordict: TensorDictBase):
         actions = tensordict[("agents", "action")]
@@ -963,19 +959,6 @@ class NavigationEnv(IsaacEnv):
         collision = static_collision | dynamic_collision
         
         # ==================== whole-body shape scan ====================
-        # g. reach goal reward
-        reach_goal_bonus = torch.zeros_like(reward_vel)
-        reach_goal_weight = getattr(self.cfg.env, "reach_goal_weight", 1.0)
-        
-        # Check if goal is reached for the first time in an episode
-        goal_reached_now = (distance.squeeze(-1) < 0.5)
-        newly_reached = goal_reached_now & ~self.reached_goal.squeeze(-1)
-        
-        if newly_reached.any():
-            reach_goal_bonus[newly_reached] = reach_goal_weight
-            self.reached_goal[newly_reached] = True
-
-        # ==================== whole-body shape scan ====================
         # Final reward calculation with curriculum weighting
         # Get reward weights and curriculum settings from config (with defaults)
         height_penalty_weight = getattr(self.cfg.env, "height_penalty_weight", 8.0)
@@ -1046,7 +1029,6 @@ class NavigationEnv(IsaacEnv):
                 + reward_safety_dynamic * w_safety_dynamic
                 - penalty_smooth * 0.1
                 - penalty_height * height_penalty_weight
-                + reach_goal_bonus
             )
         else:
             self.reward = (
@@ -1055,13 +1037,13 @@ class NavigationEnv(IsaacEnv):
                 + reward_safety_static * w_safety_static
                 - penalty_smooth * 0.1
                 - penalty_height * height_penalty_weight
-                + reach_goal_bonus
             )
         # ==================== whole-body shape scan ====================
         
 
         # Terminate Conditions
         reach_goal = (distance.squeeze(-1) < 0.5)
+
         below_bound = self.drone.pos[..., 2] < 0.2
         above_bound = self.drone.pos[..., 2] > 4.
         self.terminated = below_bound | above_bound | collision

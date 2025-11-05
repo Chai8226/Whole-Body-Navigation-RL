@@ -1,8 +1,6 @@
 import torch
 import einops
 import numpy as np
-import logging
-import os
 from tensordict.tensordict import TensorDict, TensorDictBase
 from torchrl.data import UnboundedContinuousTensorSpec, CompositeSpec, DiscreteTensorSpec
 from omni_drones.envs.isaac_env import IsaacEnv, AgentSpec
@@ -18,19 +16,17 @@ import omni.isaac.core.utils.prims as prim_utils
 import omni.isaac.orbit.sim as sim_utils
 import omni.isaac.orbit.utils.math as math_utils
 from omni.isaac.orbit.assets import RigidObject, RigidObjectCfg
-import time
-# Add body-frame rotation utility for shape-based dynamic obstacle handling
-from omni_drones.utils.torch import quat_rotate_inverse
+import time#
 
 class NavigationEnv(IsaacEnv):
 
-    # In one step:
+    # In one step:s
     # 1. _pre_sim_step (apply action) -> step isaac sim
     # 2. _post_sim_step (update lidar)
     # 3. increment progress_buf
     # 4. _compute_state_and_obs (get observation and states, update stats)
     # 5. _compute_reward_and_done (update reward and calculate returns)
-    
+
     def __init__(self, cfg):
         print("[Navigation Environment]: Initializing Env...")
         # LiDAR params:
@@ -39,236 +35,50 @@ class NavigationEnv(IsaacEnv):
         self.lidar_vbeams = cfg.sensor.lidar_vbeams
         self.lidar_hres = cfg.sensor.lidar_hres
         self.lidar_hbeams = int(360/self.lidar_hres)
-        self.vertical_ray_angles_deg = torch.cat(
-            [
-                torch.tensor([-90.0]),
-                torch.linspace(*self.lidar_vfov, self.lidar_vbeams),
-                torch.tensor([90.0]),
-            ]
-        )
-        self.lidar_vbeams_ext = self.lidar_vbeams + 2
 
         super().__init__(cfg, cfg.headless)
         
         # Drone Initialization
         self.drone.initialize()
         self.init_vels = torch.zeros_like(self.drone.get_velocities())
-        
-        # Global curriculum step counter (counts env steps during training)
-        self.curriculum_step = 0
-        self._last_training_flag = bool(self.training)
-        self._curriculum_step_checkpoint = 0
 
-        # LiDAR Initialization (use precomputed vertical angles and beam count)
+
+        # LiDAR Intialization
         ray_caster_cfg = RayCasterCfg(
             prim_path="/World/envs/env_.*/Hummingbird_0/base_link",
             offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0)),
             attach_yaw_only=True,
+            # attach_yaw_only=False,
             pattern_cfg=patterns.BpearlPatternCfg(
-                horizontal_res=self.lidar_hres,
-                vertical_ray_angles=self.vertical_ray_angles_deg
+                horizontal_res=self.lidar_hres, # horizontal default is set to 10
+                vertical_ray_angles=torch.linspace(*self.lidar_vfov, self.lidar_vbeams) 
             ),
             debug_vis=False,
             mesh_prim_paths=["/World/ground"],
+            # mesh_prim_paths=["/World"],
         )
         self.lidar = RayCaster(ray_caster_cfg)
         self.lidar._initialize_impl()
-        self.lidar_resolution = (self.lidar_hbeams, self.lidar_vbeams_ext)
+        self.lidar_resolution = (self.lidar_hbeams, self.lidar_vbeams) 
         
-        # ==================== whole-body shape scan ====================
-        # Compute robot shape scan: distance from center to surface along each ray
-        self.shape_scan = self._compute_shape_scan(cfg.drone.marker.shape)
-        print(f"Computed shape_scan with shape: {self.shape_scan.shape}")
-        # ==================== whole-body shape scan ====================
-
-        # start and target
+        # start and target 
         with torch.device(self.device):
+            # self.start_pos = torch.zeros(self.num_envs, 1, 3)
             self.target_pos = torch.zeros(self.num_envs, 1, 3)
             
             # Coordinate change: add target direction variable
             self.target_dir = torch.zeros(self.num_envs, 1, 3)
             self.height_range = torch.zeros(self.num_envs, 1, 2)
             self.prev_drone_vel_w = torch.zeros(self.num_envs, 1 , 3)
+            # self.target_pos[:, 0, 0] = torch.linspace(-0.5, 0.5, self.num_envs) * 32.
+            # self.target_pos[:, 0, 1] = 24.
+            # self.target_pos[:, 0, 2] = 2.     
 
-    # ==================== whole-body ====================
-    def _compute_shape_scan(self, shape_name):
-        """
-        Compute distance from robot center to the outermost surface along each ray direction.
-        This creates a shape scan with the same dimensions as lidar_scan.
-        Returns the MAXIMUM distance along each ray to represent the robot's outer boundary.
-        
-        Args:
-            shape_name: Name of the OBJ file (without .obj extension)
-            
-        Returns:
-            torch.Tensor: Shape scan with dimensions (1, lidar_hbeams, lidar_vbeams_ext)
-        """
-        obj_folder = os.path.join(os.path.dirname(__file__), "..", "obj")
-        obj_file = os.path.join(obj_folder, f"{shape_name}.obj")
-        
-        if not os.path.exists(obj_file):
-            print(f"OBJ file not found: {obj_file}, using zero shape scan")
-            return torch.zeros(1, self.lidar_hbeams, self.lidar_vbeams_ext, device=self.device)
-        
-        # Parse OBJ file to get vertices and faces
-        vertices = []
-        faces = []
-        with open(obj_file, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith('v '):
-                    parts = line.split()
-                    vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
-                elif line.startswith('f '):
-                    parts = line.split()
-                    face = [int(p.split('/')[0]) - 1 for p in parts[1:]]
-                    faces.append(face)
-        
-        if not vertices or not faces:
-            print(f"Invalid OBJ file: {obj_file}, using zero shape scan")
-            return torch.zeros(1, self.lidar_hbeams, self.lidar_vbeams_ext, device=self.device)
-        
-        vertices = np.array(vertices)
-        faces = np.array(faces)
-        
-        # Generate ray directions matching the LiDAR pattern
-        # Horizontal angles: 0 to 360 degrees
-        horizontal_angles = np.linspace(0, 2 * np.pi, self.lidar_hbeams, endpoint=False)
-        # Vertical angles: use extended list including +/-90 deg
-        vertical_angles = np.deg2rad(self.vertical_ray_angles_deg.cpu().numpy())
-        
-        shape_distances = np.zeros((self.lidar_hbeams, self.lidar_vbeams_ext))
-        
-        # For each ray direction, compute intersection with robot mesh
-        for h_idx, h_angle in enumerate(horizontal_angles):
-            for v_idx, v_angle in enumerate(vertical_angles):
-                # Convert spherical to Cartesian coordinates
-                # x: forward, y: left, z: up
-                ray_dir = np.array([
-                    np.cos(v_angle) * np.cos(h_angle),  # x
-                    np.cos(v_angle) * np.sin(h_angle),  # y
-                    np.sin(v_angle)                      # z
-                ])
-                
-                # Find intersection with mesh
-                max_distance = self._ray_mesh_intersection(
-                    ray_origin=np.array([0.0, 0.0, 0.0]),
-                    ray_direction=ray_dir,
-                    vertices=vertices,
-                    faces=faces
-                )
-                
-                shape_distances[h_idx, v_idx] = max_distance
-        
-        # Convert to torch tensor
-        shape_scan = torch.tensor(shape_distances, dtype=torch.float32, device=self.device)
-        shape_scan = shape_scan.unsqueeze(0)  # Add batch dimension: (1, H, Vext)
-        
-        print(f"Shape scan statistics - min: {shape_scan.min():.4f}, max: {shape_scan.max():.4f}, mean: {shape_scan.mean():.4f}")
-        
-        # Save shape_scan data to file for visualization
-        save_folder = os.path.join(os.path.dirname(__file__), "..", "shape_scan_data")
-        os.makedirs(save_folder, exist_ok=True)
-        save_file = os.path.join(save_folder, f"{shape_name}_shape_scan.npz")
-        
-        # Save both the shape_scan and metadata
-        np.savez(
-            save_file,
-            shape_scan=shape_scan.cpu().numpy(),
-            shape_name=shape_name,
-            lidar_hbeams=self.lidar_hbeams,
-            lidar_vbeams=self.lidar_vbeams_ext,
-            lidar_vfov=(-90.0, 90.0),
-            horizontal_angles=horizontal_angles,
-            vertical_angles=vertical_angles,
-        )
-        print(f"Shape scan saved to: {save_file}")
-        
-        return shape_scan
-    
-    def _ray_mesh_intersection(self, ray_origin, ray_direction, vertices, faces):
-        """
-        Compute the farthest intersection distance between a ray and a triangle mesh.
-        Uses Möller-Trumbore ray-triangle intersection algorithm.
-        This returns the maximum distance to represent the outermost surface of the robot.
-        
-        Args:
-            ray_origin: Origin of the ray (3,)
-            ray_direction: Direction of the ray (3,), should be normalized
-            vertices: Mesh vertices (N, 3)
-            faces: Mesh faces (M, 3), indices into vertices
-            
-        Returns:
-            float: Distance to farthest intersection, or 0 if no intersection
-        """
-        epsilon = 1e-6
-        max_distance = 0.0  # Changed from min_distance to max_distance
-        
-        # Normalize ray direction
-        ray_direction = ray_direction / (np.linalg.norm(ray_direction) + epsilon)
-        
-        # Check intersection with each triangle
-        for face in faces:
-            v0, v1, v2 = vertices[face[0]], vertices[face[1]], vertices[face[2]]
-            
-            # Möller-Trumbore algorithm
-            edge1 = v1 - v0
-            edge2 = v2 - v0
-            h = np.cross(ray_direction, edge2)
-            a = np.dot(edge1, h)
-            
-            # Ray is parallel to triangle
-            if abs(a) < epsilon:
-                continue
-            
-            f = 1.0 / a
-            s = ray_origin - v0
-            u = f * np.dot(s, h)
-            
-            if u < 0.0 or u > 1.0:
-                continue
-            
-            q = np.cross(s, edge1)
-            v = f * np.dot(ray_direction, q)
-            
-            if v < 0.0 or u + v > 1.0:
-                continue
-            
-            # Compute intersection distance
-            t = f * np.dot(edge2, q)
-            
-            # Valid intersection (in front of ray origin)
-            # Take the MAXIMUM distance to get the outermost surface
-            if t > epsilon:
-                max_distance = max(max_distance, t)
-        
-        # Return 0 if no intersection found (ray doesn't hit the mesh)
-        return max_distance
-    # ==================== whole-body ====================
 
     def _design_scene(self):
         # Initialize a drone in prim /World/envs/envs_0
         drone_model = MultirotorBase.REGISTRY[self.cfg.drone.model_name] # drone model class
         cfg = drone_model.cfg_cls(force_sensor=False)
-        # optional: attach a visualization-only marker at drone center (base_link)
-        marker_cfg = getattr(self.cfg.drone, "marker", None)
-
-        # ==================== whole-body visualization marker ====================
-        # Now we load precise geometry from OBJ files instead of using simple shapes or points
-        if marker_cfg is not None and bool(marker_cfg.enable):
-                cfg.center_marker = True
-                # shape: OBJ file name (without .obj extension)
-                if hasattr(marker_cfg, "shape"):  
-                    cfg.center_marker_shape = str(marker_cfg.shape)
-                # color: RGB tuple
-                if hasattr(marker_cfg, "color"):
-                    cfg.center_marker_color = tuple(float(v) for v in marker_cfg.color)
-                
-                print(f"Enabling whole-body visualization with OBJ file: {cfg.center_marker_shape}.obj")
-        else:
-            cfg.center_marker = False
-        # ====================================================================
-        
         self.drone = drone_model(cfg=cfg)
         # drone_prim = self.drone.spawn(translations=[(0.0, 0.0, 1.0)])[0]
         drone_prim = self.drone.spawn(translations=[(0.0, 0.0, 2.0)])[0]
@@ -328,97 +138,8 @@ class NavigationEnv(IsaacEnv):
         )
         terrain_importer = TerrainImporter(terrain_cfg)
 
-        # ==================== whole-body ====================
-        # Add horizontal beams to the terrain mesh so LiDAR can detect them
-        from pxr import UsdGeom
-        from pxr import Vt
-        
-        num_beams = int(getattr(self.cfg.env, "num_static_beams", 12))
-        beam_len_range = tuple(getattr(self.cfg.env, "beam_length_range", [2.0, 6.0]))
-        beam_thk_range = tuple(getattr(self.cfg.env, "beam_thickness_range", [0.2, 0.4]))
-        beam_z_range = tuple(getattr(self.cfg.env, "beam_height_range", [1.0, 3.0]))
-        
-        # Get the terrain mesh prim to append beam geometries
-        stage = prim_utils.get_current_stage()
-        terrain_mesh_prim_path = "/World/ground/terrain/mesh"
-        terrain_mesh_prim = UsdGeom.Mesh.Get(stage, terrain_mesh_prim_path)
-        
-        if terrain_mesh_prim:
-            # Get existing mesh data
-            existing_points = list(terrain_mesh_prim.GetPointsAttr().Get())
-            existing_face_counts = list(terrain_mesh_prim.GetFaceVertexCountsAttr().Get())
-            existing_face_indices = list(terrain_mesh_prim.GetFaceVertexIndicesAttr().Get())
-            vertex_offset = len(existing_points)
-            
-            # Generate beam meshes and append to terrain
-            beam_meshes = []
-            
-            # X-direction beams
-            for i in range(num_beams // 2 + num_beams % 2):
-                L = float(np.random.uniform(*beam_len_range))
-                T = float(np.random.uniform(*beam_thk_range))
-                z = float(np.random.uniform(*beam_z_range))
-                x = float(np.random.uniform(-self.map_range[0]+1.5, self.map_range[0]-1.5))
-                y = float(np.random.uniform(-self.map_range[1]+1.5, self.map_range[1]-1.5))
-                
-                # Create box vertices
-                lx, ly, lz = L/2, T/2, T/2
-                box_verts = np.array([
-                    [x-lx, y-ly, z-lz], [x+lx, y-ly, z-lz], [x+lx, y+ly, z-lz], [x-lx, y+ly, z-lz],
-                    [x-lx, y-ly, z+lz], [x+lx, y-ly, z+lz], [x+lx, y+ly, z+lz], [x-lx, y+ly, z+lz]
-                ])
-                beam_meshes.append((box_verts, vertex_offset))
-                vertex_offset += 8
-            
-            # Y-direction beams
-            for i in range(num_beams // 2):
-                L = float(np.random.uniform(*beam_len_range))
-                T = float(np.random.uniform(*beam_thk_range))
-                z = float(np.random.uniform(*beam_z_range))
-                x = float(np.random.uniform(-self.map_range[0]+1.5, self.map_range[0]-1.5))
-                y = float(np.random.uniform(-self.map_range[1]+1.5, self.map_range[1]-1.5))
-                
-                # Create box vertices
-                lx, ly, lz = T/2, L/2, T/2
-                box_verts = np.array([
-                    [x-lx, y-ly, z-lz], [x+lx, y-ly, z-lz], [x+lx, y+ly, z-lz], [x-lx, y+ly, z-lz],
-                    [x-lx, y-ly, z+lz], [x+lx, y-ly, z+lz], [x+lx, y+ly, z+lz], [x-lx, y+ly, z+lz]
-                ])
-                beam_meshes.append((box_verts, vertex_offset))
-                vertex_offset += 8
-            
-            # Box face topology (same for all boxes)
-            box_face_indices = [
-                0, 1, 2, 3,  # bottom
-                4, 5, 6, 7,  # top
-                0, 1, 5, 4,  # front
-                2, 3, 7, 6,  # back
-                0, 3, 7, 4,  # left
-                1, 2, 6, 5   # right
-            ]
-            
-            # Append all beam vertices and faces to the terrain mesh
-            for verts, offset in beam_meshes:
-                for vert in verts:
-                    existing_points.append(tuple(vert))
-                for idx in box_face_indices:
-                    existing_face_indices.append(offset + idx)
-                for _ in range(6):  # 6 quad faces per box
-                    existing_face_counts.append(4)
-            
-            # Update the terrain mesh with new geometry
-            terrain_mesh_prim.GetPointsAttr().Set(Vt.Vec3fArray(existing_points))
-            terrain_mesh_prim.GetFaceVertexCountsAttr().Set(existing_face_counts)
-            terrain_mesh_prim.GetFaceVertexIndicesAttr().Set(existing_face_indices)
-            
-            print(f"[Navigation Environment]: Added {num_beams} horizontal beams to terrain mesh for LiDAR detection")
-        else:
-            print(f"[WARNING]: Could not find terrain mesh at {terrain_mesh_prim_path}, beams will not be detected by LiDAR!")
-        # ==================== whole-body ====================
-
         if (self.cfg.env_dyn.num_obstacles == 0):
             return
-        
         # Dynamic Obstacles
         # NOTE: we use cuboid to represent 3D dynamic obstacles which can float in the air 
         # and the long cylinder to represent 2D dynamic obstacles for which the drone can only pass in 2D 
@@ -525,6 +246,8 @@ class NavigationEnv(IsaacEnv):
             self.dyn_obs_size[category_idx*self.dyn_obs_num_of_each_category:(category_idx+1)*self.dyn_obs_num_of_each_category] \
                 = torch.tensor([obs_width, obs_width, obs_height], dtype=torch.float, device=self.cfg.device)
 
+
+
     def move_dynamic_obstacle(self):
         # Step 1: Random sample new goals for required update dynamic obstacles
         # Check whether the current dynamic obstacles need new goals
@@ -567,31 +290,27 @@ class NavigationEnv(IsaacEnv):
 
         self.dyn_obs_step_count += 1
 
-    # ==================== whole-body ====================
+
     def _set_specs(self):
-        observation_dim = 7  # Changed from 8: 3(rpos_clipped_b) + 1(distance) + 3(vel_b)
-        num_dim_each_dyn_obs_state = 9  # Changed from 10: 3(rpos_gn) + 1(distance) + 3(vel_g) + 1(width) + 1(height)
+        observation_dim = 8
+        num_dim_each_dyn_obs_state = 10
 
         # Observation Spec
         self.observation_spec = CompositeSpec({
             "agents": CompositeSpec({
                 "observation": CompositeSpec({
                     "state": UnboundedContinuousTensorSpec((observation_dim,), device=self.device), 
-                    "lidar": UnboundedContinuousTensorSpec((1, self.lidar_hbeams, self.lidar_vbeams_ext), device=self.device),
+                    "lidar": UnboundedContinuousTensorSpec((1, self.lidar_hbeams, self.lidar_vbeams), device=self.device),
                     "direction": UnboundedContinuousTensorSpec((1, 3), device=self.device),
                     "dynamic_obstacle": UnboundedContinuousTensorSpec((1, self.cfg.algo.feature_extractor.dyn_obs_num, num_dim_each_dyn_obs_state), device=self.device),
-                    # ==================== whole-body ====================
-                    "shape_scan": UnboundedContinuousTensorSpec((1, self.lidar_hbeams, self.lidar_vbeams_ext), device=self.device),
-                    # ====================================================
                 }),
             }).expand(self.num_envs)
         }, shape=[self.num_envs], device=self.device)
         
         # Action Spec
-        # Keep base env's action space as low-level motor commands; yaw control is introduced via VelController transform.
         self.action_spec = CompositeSpec({
             "agents": CompositeSpec({
-                "action": self.drone.action_spec, # motor command space
+                "action": self.drone.action_spec, # number of motor
             })
         }).expand(self.num_envs).to(self.device)
         
@@ -625,8 +344,8 @@ class NavigationEnv(IsaacEnv):
         self.observation_spec["info"] = info_spec
         self.stats = stats_spec.zero()
         self.info = info_spec.zero()
-    # ==================== whole-body ====================
 
+    
     def reset_target(self, env_ids: torch.Tensor):
         if (self.training):
             # decide which side
@@ -653,6 +372,7 @@ class NavigationEnv(IsaacEnv):
             self.target_pos[:, 0, 0] = torch.linspace(-0.5, 0.5, self.num_envs) * 32.
             self.target_pos[:, 0, 1] = -24.
             self.target_pos[:, 0, 2] = 2.            
+
 
     def _reset_idx(self, env_ids: torch.Tensor):
         self.drone._reset_idx(env_ids, self.training)
@@ -693,86 +413,68 @@ class NavigationEnv(IsaacEnv):
         self.drone.set_world_poses(pos, rot, env_ids)
         self.drone.set_velocities(self.init_vels[env_ids], env_ids)
         self.prev_drone_vel_w[env_ids] = 0.
+        self.height_range[env_ids, 0, 0] = torch.min(pos[:, 0, 2], self.target_pos[env_ids, 0, 2])
+        self.height_range[env_ids, 0, 1] = torch.max(pos[:, 0, 2], self.target_pos[env_ids, 0, 2])
 
-        # ==================== whole-body ====================
-        min_flight_height = getattr(self.cfg.env, "min_flight_height", 0.5)
-        max_flight_height = getattr(self.cfg.env, "max_flight_height", 4.0)
-        self.height_range[env_ids, 0, 0] = min_flight_height
-        self.height_range[env_ids, 0, 1] = max_flight_height
-        # ==================== whole-body ====================
-
-        self.stats[env_ids] = 0.
-
+        self.stats[env_ids] = 0.  
+        
     def _pre_sim_step(self, tensordict: TensorDictBase):
-        actions = tensordict[("agents", "action")]
-        self.drone.apply_action(actions)
+        actions = tensordict[("agents", "action")] 
+        self.drone.apply_action(actions) 
 
     def _post_sim_step(self, tensordict: TensorDictBase):
-        # Detect train/eval toggles and optionally freeze/restore curriculum counter during eval
-        freeze_in_eval = bool(getattr(self.cfg.env, "curriculum_freeze_in_eval", True))
-        if self.training != self._last_training_flag:
-            if freeze_in_eval:
-                if not self.training:
-                    # entering eval: checkpoint current counter
-                    self._curriculum_step_checkpoint = self.curriculum_step
-                else:
-                    # leaving eval back to training: restore counter (discard any eval increments)
-                    self.curriculum_step = self._curriculum_step_checkpoint
-            self._last_training_flag = bool(self.training)
-
-        # advance global curriculum steps during training only
-        if self.training:
-            self.curriculum_step += 1
         if (self.cfg.env_dyn.num_obstacles != 0):
             self.move_dynamic_obstacle()
         self.lidar.update(self.dt)
     
-    # ==================== whole-body ====================
+    # get current states/observation
     def _compute_state_and_obs(self):
         self.root_state = self.drone.get_state(env_frame=False) # (world_pos, orientation (quat), world_vel_and_angular, heading, up, 4motorsthrust)
         self.info["drone_state"][:] = self.root_state[..., :13] # info is for controller
 
+        # >>>>>>>>>>>>The relevant code starts from here<<<<<<<<<<<<
         # -----------Network Input I: LiDAR range data--------------
-
-        # Step 1: Calculate distance from drone center to obstacles
-        # ==================== whole-body scan ====================
-        ray_distances = (
+        self.lidar_scan = self.lidar_range - (
             (self.lidar.data.ray_hits_w - self.lidar.data.pos_w.unsqueeze(1))
             .norm(dim=-1)
             .clamp_max(self.lidar_range)
             .reshape(self.num_envs, 1, *self.lidar_resolution)
-        )
-        clearance = (ray_distances - self.shape_scan).clamp(min=0.0)
-        self.lidar_scan = clearance
-        # ============================================================
+        ) # lidar scan store the data that is range - distance and it is in lidar's local frame
 
         # Optional render for LiDAR
         if self._should_render(0):
             self.debug_draw.clear()
             x = self.lidar.data.pos_w[0]
+            # set_camera_view(
+            #     eye=x.cpu() + torch.as_tensor(self.cfg.viewer.eye),
+            #     target=x.cpu() + torch.as_tensor(self.cfg.viewer.lookat)                        
+            # )
             v = (self.lidar.data.ray_hits_w[0] - x).reshape(*self.lidar_resolution, 3)
+            # self.debug_draw.vector(x.expand_as(v[:, 0]), v[:, 0])
+            # self.debug_draw.vector(x.expand_as(v[:, -1]), v[:, -1])
             self.debug_draw.vector(x.expand_as(v[:, 0])[0], v[0, 0])
 
         # ---------Network Input II: Drone's internal states---------
-        # Get drone's current orientation quaternion
-        quat_w = self.root_state[..., 3:7]
-
         # a. distance info in horizontal and vertical plane
         rpos = self.target_pos - self.root_state[..., :3]        
         distance = rpos.norm(dim=-1, keepdim=True) # start to goal distance
+        distance_2d = rpos[..., :2].norm(dim=-1, keepdim=True)
+        distance_z = rpos[..., 2].unsqueeze(-1)
+        
         
         # b. unit direction vector to goal
-        target_dir_3d = self.target_dir.clone()
+        target_dir_2d = self.target_dir.clone()
+        target_dir_2d[..., 2] = 0
 
         rpos_clipped = rpos / distance.clamp(1e-6) # unit vector: start to goal direction
-        rpos_clipped_b = quat_rotate_inverse(quat_w, rpos_clipped)
+        rpos_clipped_g = vec_to_new_frame(rpos_clipped, target_dir_2d) # express in the goal coodinate
         
-        # c. velocity in the drone's body frame
+        # c. velocity in the goal frame
         vel_w = self.root_state[..., 7:10] # world vel
-        vel_b = quat_rotate_inverse(quat_w, vel_w)   # coordinate change for velocity
+        vel_g = vec_to_new_frame(vel_w, target_dir_2d)   # coordinate change for velocity
 
         # final drone's internal states
-        drone_state = torch.cat([rpos_clipped_b, distance, vel_b], dim=-1).squeeze(1)
+        drone_state = torch.cat([rpos_clipped_g, distance_2d, distance_z, vel_g], dim=-1).squeeze(1)
 
         if (self.cfg.env_dyn.num_obstacles != 0):
             # ---------Network Input III: Dynamic obstacle states--------
@@ -781,58 +483,28 @@ class NavigationEnv(IsaacEnv):
             # Find the N closest and within range obstacles for each drone
             dyn_obs_pos_expanded = self.dyn_obs_state[..., :3].unsqueeze(0).repeat(self.num_envs, 1, 1)
             dyn_obs_rpos_expanded = dyn_obs_pos_expanded[..., :3] - self.root_state[..., :3] 
-            dyn_obs_distance = torch.norm(dyn_obs_rpos_expanded, dim=2)  # Shape: (num_envs, num_dyn_obs)
-            _, closest_dyn_obs_idx = torch.topk(dyn_obs_distance, self.cfg.algo.feature_extractor.dyn_obs_num, dim=1, largest=False) # pick top N closest obstacle index
-            dyn_obs_range_mask = dyn_obs_distance.gather(1, closest_dyn_obs_idx) > self.lidar_range
+            dyn_obs_rpos_expanded[:, int(self.dyn_obs_state.size(0)/2):, 2] = 0.
+            dyn_obs_distance_2d = torch.norm(dyn_obs_rpos_expanded[..., :2], dim=2)  # Shape: (1000, 40). calculate 2d distance to each obstacle for all drones
+            _, closest_dyn_obs_idx = torch.topk(dyn_obs_distance_2d, self.cfg.algo.feature_extractor.dyn_obs_num, dim=1, largest=False) # pick top N closest obstacle index
+            dyn_obs_range_mask = dyn_obs_distance_2d.gather(1, closest_dyn_obs_idx) > self.lidar_range
 
-            # relative distance of obstacles in the drone's body frame
+            # relative distance of obstacles in the goal frame
             closest_dyn_obs_rpos = torch.gather(dyn_obs_rpos_expanded, 1, closest_dyn_obs_idx.unsqueeze(-1).expand(-1, -1, 3))
-            closest_dyn_obs_rpos_g = vec_to_new_frame(closest_dyn_obs_rpos, target_dir_3d) 
+            closest_dyn_obs_rpos_g = vec_to_new_frame(closest_dyn_obs_rpos, target_dir_2d) 
             closest_dyn_obs_rpos_g[dyn_obs_range_mask] = 0. # exclude out of range obstacles
             closest_dyn_obs_distance = closest_dyn_obs_rpos.norm(dim=-1, keepdim=True)
+            closest_dyn_obs_distance_2d = closest_dyn_obs_rpos_g[..., :2].norm(dim=-1, keepdim=True)
+            closest_dyn_obs_distance_z = closest_dyn_obs_rpos_g[..., 2].unsqueeze(-1)
             closest_dyn_obs_rpos_gn = closest_dyn_obs_rpos_g / closest_dyn_obs_distance.clamp(1e-6)
-
-            # Get size of dynamic obstacles (needed for whole-body clearance computation)
-            closest_dyn_obs_size = self.dyn_obs_size[closest_dyn_obs_idx] # the actual size
-
-            # ==================== whole-body ====================
-            # Compute robot radial extent along the direction to each obstacle by indexing shape_scan
-            dir_vec = closest_dyn_obs_rpos / closest_dyn_obs_distance.clamp_min(1e-6)  # (N, K, 3), normalized
-            phi = torch.atan2(dir_vec[..., 1], dir_vec[..., 0])
-            two_pi = torch.tensor(2.0 * np.pi, device=self.device)
-            phi = torch.remainder(phi + two_pi, two_pi)
-            # phi = torch.fmod(phi + two_pi, two_pi)
-            H = self.lidar_hbeams
-            V = self.lidar_vbeams_ext
-            # vertical angle in radians
-            v_angle = torch.atan2(dir_vec[..., 2], torch.norm(dir_vec[..., :2], dim=-1))
-            deg = v_angle * (180.0 / np.pi)
-            vfov_min = -90.0
-            vfov_max = 90.0
-            # map angles to discrete beam indices
-            h_idx = torch.round(phi / two_pi * (H)).long() % H
-            v_idx = torch.round((deg - vfov_min) / max(vfov_max - vfov_min, 1e-6) * (V - 1)).clamp(0, V - 1).long()
-            # gather per-direction robot radial distance from shape_scan
-            shape_map = self.shape_scan[0].reshape(H * V)  # (H*V)
-            lin_idx = (h_idx * V + v_idx).view(-1)  # flatten to (N*K)
-            shape_r = shape_map[lin_idx].view(h_idx.shape)  # (N, K)
-            shape_r = shape_r.unsqueeze(-1)  # (N, K, 1)
-            # Clearance to obstacle surfaces (3D, with 2D-only already encoded by z=0 for last half)
-            width_half = (closest_dyn_obs_size[..., 0].unsqueeze(-1)) * 0.5  # (N, K, 1)
-            clearance_3d = (closest_dyn_obs_distance - shape_r - width_half).clamp_min(0.0)
-            
-            # Provide clearance tensor for reward below via a reserved name
-            closest_dyn_obs_clearance_reward = clearance_3d.squeeze(-1)
-            # Mask out-of-range obstacles
-            closest_dyn_obs_clearance_reward[dyn_obs_range_mask] = self.cfg.sensor.lidar_range
-            # ==================== whole-body ====================
 
             # b. Velocity in the goal frame for the dynamic obstacles
             closest_dyn_obs_vel = self.dyn_obs_vel[closest_dyn_obs_idx]
             closest_dyn_obs_vel[dyn_obs_range_mask] = 0.
-            closest_dyn_obs_vel_g = vec_to_new_frame(closest_dyn_obs_vel, target_dir_3d) 
+            closest_dyn_obs_vel_g = vec_to_new_frame(closest_dyn_obs_vel, target_dir_2d) 
 
-            # c. Size of dynamic obstacles in category (already defined above for whole-body clearance)
+            # c. Size of dynamic obstacles in category
+            closest_dyn_obs_size = self.dyn_obs_size[closest_dyn_obs_idx] # the acutal size
+
             closest_dyn_obs_width = closest_dyn_obs_size[..., 0].unsqueeze(-1)
             closest_dyn_obs_width_category = closest_dyn_obs_width / self.dyn_obs_width_res - 1. # convert to category: [0, 1, 2, 3]
             closest_dyn_obs_width_category[dyn_obs_range_mask] = 0.
@@ -842,38 +514,45 @@ class NavigationEnv(IsaacEnv):
             closest_dyn_obs_height_category[dyn_obs_range_mask] = 0.
 
             # concatenate all for dynamic obstacles
-            dyn_obs_states = torch.cat([closest_dyn_obs_rpos_gn, closest_dyn_obs_distance, closest_dyn_obs_vel_g, closest_dyn_obs_width_category, closest_dyn_obs_height_category], dim=-1).unsqueeze(1)      
+            # dyn_obs_states = torch.cat([closest_dyn_obs_rpos_g, closest_dyn_obs_vel_g, closest_dyn_obs_width_category, closest_dyn_obs_height_category], dim=-1).unsqueeze(1)
+            dyn_obs_states = torch.cat([closest_dyn_obs_rpos_gn, closest_dyn_obs_distance_2d, closest_dyn_obs_distance_z, closest_dyn_obs_vel_g, closest_dyn_obs_width_category, closest_dyn_obs_height_category], dim=-1).unsqueeze(1)
+
+            # check dynamic obstacle collision for later reward
+            closest_dyn_obs_distance_2d_collsion = closest_dyn_obs_rpos[..., :2].norm(dim=-1, keepdim=True)
+            closest_dyn_obs_distance_2d_collsion[dyn_obs_range_mask] = float('inf')
+            closest_dyn_obs_distance_zn_collision = closest_dyn_obs_rpos[..., 2].unsqueeze(-1).norm(dim=-1, keepdim=True)
+            closest_dyn_obs_distance_zn_collision[dyn_obs_range_mask] = float('inf')
+            dynamic_collision_2d = closest_dyn_obs_distance_2d_collsion <= (closest_dyn_obs_width/2. + 0.3)
+            dynamic_collision_z = closest_dyn_obs_distance_zn_collision <= (closest_dyn_obs_height/2. + 0.3)
+            dynamic_collision_each = dynamic_collision_2d & dynamic_collision_z
+            dynamic_collision = torch.any(dynamic_collision_each, dim=1)
+
+            # distance to dynamic obstacle for reward calculation (not 100% correct in math but should be good enough for approximation)
+            closest_dyn_obs_distance_reward = closest_dyn_obs_rpos.norm(dim=-1) - closest_dyn_obs_size[..., 0]/2. # for those 2D obstacle, z distance will not be considered
+            closest_dyn_obs_distance_reward[dyn_obs_range_mask] = self.cfg.sensor.lidar_range
+            
         else:
-            dyn_obs_states = torch.zeros(self.num_envs, 1, self.cfg.algo.feature_extractor.dyn_obs_num, 9, device=self.cfg.device)
+            dyn_obs_states = torch.zeros(self.num_envs, 1, self.cfg.algo.feature_extractor.dyn_obs_num, 10, device=self.cfg.device)
+            dynamic_collision = torch.zeros(self.num_envs, 1, dtype=torch.bool, device=self.cfg.device)
             
         # -----------------Network Input Final--------------
         obs = {
             "state": drone_state,
             "lidar": self.lidar_scan,
-            "direction": target_dir_3d,
-            "dynamic_obstacle": dyn_obs_states,
-            # ==================== whole-body shape scan ====================
-            "shape_scan": self.shape_scan.expand(self.num_envs, -1, -1, -1)  # Expand to batch size
-            # ===============================================================
+            "direction": target_dir_2d,
+            "dynamic_obstacle": dyn_obs_states
         }
 
 
         # -----------------Reward Calculation-----------------
         # a. safety reward for static obstacles
-
-        # ==================== whole-body ====================
-        safety_lambda = getattr(self.cfg.env, "safety_reward_lambda", 1.0)
-        safety_k = getattr(self.cfg.env, "safety_reward_k", 0.5)
-        clearance_squared = self.lidar_scan ** 2
-        reward_safety_static = safety_lambda * (1.0 - torch.exp(-safety_k * clearance_squared))
-        reward_safety_static = reward_safety_static.mean(dim=(2, 3))  # Average over all rays
+        reward_safety_static = torch.log((self.lidar_range-self.lidar_scan).clamp(min=1e-6, max=self.lidar_range)).mean(dim=(2, 3))
+        
 
         # b. safety reward for dynamic obstacles
         if (self.cfg.env_dyn.num_obstacles != 0):
-            clearance_dyn_squared = closest_dyn_obs_clearance_reward ** 2
-            reward_safety_dynamic = safety_lambda * (1.0 - torch.exp(-safety_k * clearance_dyn_squared))
-            reward_safety_dynamic = reward_safety_dynamic.mean(dim=-1, keepdim=True)
-        # ==================== whole-body ====================
+            reward_safety_dynamic = torch.log((closest_dyn_obs_distance_reward).clamp(min=1e-6, max=self.lidar_range)).mean(dim=-1, keepdim=True)
+        
 
         # c. velocity reward for goal direction
         vel_direction = rpos / distance.clamp_min(1e-6)
@@ -881,132 +560,34 @@ class NavigationEnv(IsaacEnv):
         
         # d. smoothness reward for action smoothness
         penalty_smooth = (self.drone.vel_w[..., :3] - self.prev_drone_vel_w).norm(dim=-1)
-
-        # ==================== whole-body ====================
-        # e. Unified height reward: combines preference for optimal height and penalty for being out of bounds
-        # The optimal height is dynamically set to the goal's z-coordinate.
-        optimal_height = self.target_pos[..., 2]  # (num_envs, 1)
-        height_sigma = getattr(self.cfg.env, "height_reward_sigma", 0.5)
         
-        drone_height = self.drone.pos[..., 2]  # (num_envs,)
-        height_diff = drone_height - optimal_height.squeeze(-1)  # (num_envs,)
-        reward_height_pref = torch.exp(-0.5 * (height_diff / height_sigma) ** 2)
-        min_h = self.height_range[..., 0, 0]  # (num_envs,)
-        max_h = self.height_range[..., 0, 1]  # (num_envs,)
-        out_of_bounds_lower = torch.clamp(min_h - drone_height, min=0.0)
-        out_of_bounds_upper = torch.clamp(drone_height - max_h, min=0.0)
-        penalty_out_of_bounds = out_of_bounds_lower**2 + out_of_bounds_upper**2
-        
-        # Combine preference and penalty into a single height reward term
-        height_reward_weight = getattr(self.cfg.env, "height_reward_weight", 1.0)
-        height_penalty_weight = getattr(self.cfg.env, "height_penalty_weight", 4.0)
-        reward_height = reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight  # (num_envs,)
-        # ==================== whole-body ====================
+        # e. height penalty reward for flying unnessarily high or low
+        penalty_height = torch.zeros(self.num_envs, 1, device=self.cfg.device)
+        penalty_height[self.drone.pos[..., 2] > (self.height_range[..., 1] + 0.2)] = ( (self.drone.pos[..., 2] - self.height_range[..., 1] - 0.2)**2 )[self.drone.pos[..., 2] > (self.height_range[..., 1] + 0.2)]
+        penalty_height[self.drone.pos[..., 2] < (self.height_range[..., 0] - 0.2)] = ( (self.height_range[..., 0] - 0.2 - self.drone.pos[..., 2])**2 )[self.drone.pos[..., 2] < (self.height_range[..., 0] - 0.2)]
 
 
         # f. Collision condition with its penalty
-        # ==================== whole-body ====================
-        # Static collision already uses surface distance via lidar_scan
-        lidar_min = einops.reduce(self.lidar_scan, "n 1 w h -> n 1", "min")
-        collision_threshold = 0.1
-        static_collision = (lidar_min < collision_threshold) & (self.progress_buf.unsqueeze(1) > 5)
-
-        if (self.cfg.env_dyn.num_obstacles != 0):
-            dynamic_collision = (closest_dyn_obs_clearance_reward.min(dim=1, keepdim=True).values < collision_threshold) & (self.progress_buf.unsqueeze(1) > 5)
-        else:
-            dynamic_collision = torch.zeros_like(static_collision)
-        # ==================== whole-body ====================
-        
+        static_collision = einops.reduce(self.lidar_scan, "n 1 w h -> n 1", "max") >  (self.lidar_range - 0.3) # 0.3 collision radius
         collision = static_collision | dynamic_collision
         
-        # ==================== whole-body ====================
-        # Curriculum configuration
-        r1 = getattr(self.cfg.env, "curriculum_r1_steps", None)
-        r2 = getattr(self.cfg.env, "curriculum_r2_steps", None)
-        total_steps = float(getattr(self.cfg.env, "curriculum_total_steps", 1_000_000))
-        step_divisor = float(getattr(self.cfg.env, "curriculum_step_divisor", 1.0))
-
-        if self.training:
-            if r1 is not None and r2 is not None and float(r2) > float(r1):
-                step_now = float(self.curriculum_step)
-                if step_now < float(r1):
-                    p = 0.0
-                elif step_now >= float(r2):
-                    p = 1.0
-                else:
-                    p = (step_now - float(r1)) / (float(r2) - float(r1))
-            else:
-                # fallback to continuous schedule
-                effective_steps = self.curriculum_step / max(step_divisor, 1e-9)
-                p = float(min(1.0, max(0.0, effective_steps / max(total_steps, 1e-9))))
-        else:
-            p = 1.0  # evaluation uses final weights (safety-focused)
-
-        # Linear schedules for weights
-        vel_w_start = float(getattr(self.cfg.env, "vel_weight_start", 1.5))
-        vel_w_end = float(getattr(self.cfg.env, "vel_weight_end", 1.0))
-        safety_w_start = float(getattr(self.cfg.env, "safety_weight_start", 0.8))
-        safety_w_end = float(getattr(self.cfg.env, "safety_weight_end", 1.5))
-        safety_dyn_w_start = float(getattr(self.cfg.env, "safety_dyn_weight_start", safety_w_start))
-        safety_dyn_w_end = float(getattr(self.cfg.env, "safety_dyn_weight_end", safety_w_end))
-
-        w_vel = vel_w_start + (vel_w_end - vel_w_start) * p
-        w_safety_static = safety_w_start + (safety_w_end - safety_w_start) * p
-        w_safety_dynamic = safety_dyn_w_start + (safety_dyn_w_end - safety_dyn_w_start) * p
-
-        base_bias = 1.0
-
-        # Optional curriculum logging: every N steps in training, once at start in eval
-        log_interval = int(getattr(self.cfg.env, "curriculum_log_interval", 1000))
-        should_log_train = self.training and (log_interval > 0) and (self.curriculum_step % log_interval == 0)
-        should_log_eval = (not self.training) and (self.progress_buf[0].item() == 0)
-        if should_log_train or should_log_eval:
-            # Use effective step for display to avoid confusion during eval
-            effective_step_display = (
-                self.curriculum_step if self.training else (self._curriculum_step_checkpoint if log_interval >= 0 else self.curriculum_step)
-            )
-            if (self.cfg.env_dyn.num_obstacles != 0):
-                logging.info(
-                    f"[Curriculum] step={effective_step_display} p={p:.4f} "
-                    f"w_vel={w_vel:.3f} w_safety_static={w_safety_static:.3f} "
-                    f"w_safety_dynamic={w_safety_dynamic:.3f}"
-                )
-            else:
-                logging.info(
-                    f"[Curriculum] step={effective_step_display} p={p:.4f} "
-                    f"w_vel={w_vel:.3f} w_safety={w_safety_static:.3f}"
-                )
-
+        # Final reward calculation
         if (self.cfg.env_dyn.num_obstacles != 0):
-            self.reward = (
-                reward_vel * w_vel
-                + base_bias
-                + reward_safety_static * w_safety_static
-                + reward_safety_dynamic * w_safety_dynamic
-                - penalty_smooth * 0.1
-                + reward_height 
-            )
+            self.reward = reward_vel + 1. + reward_safety_static * 1.0 + reward_safety_dynamic * 1.0 - penalty_smooth * 0.1 - penalty_height * 8.0
         else:
-            self.reward = (
-                reward_vel * w_vel
-                + base_bias
-                + reward_safety_static * w_safety_static
-                - penalty_smooth * 0.1
-                + reward_height
-            )
-        # ==================== whole-body ====================
-        
+            self.reward = reward_vel + 1. + reward_safety_static * 1.0 - penalty_smooth * 0.1 - penalty_height * 8.0
+
+        # Terminal reward
+        # self.reward[collision] -= 50. # collision
 
         # Terminate Conditions
         reach_goal = (distance.squeeze(-1) < 0.5)
-
         below_bound = self.drone.pos[..., 2] < 0.2
         above_bound = self.drone.pos[..., 2] > 4.
         self.terminated = below_bound | above_bound | collision
-        
         self.truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1) # progress buf is to track the step number
 
-        # update previous velocity for smoothness calculation in the next iteration
+        # update previous velocity for smoothness calculation in the next ieteration
         self.prev_drone_vel_w = self.drone.vel_w[..., :3].clone()
 
         # # -----------------Training Stats-----------------
@@ -1026,7 +607,6 @@ class NavigationEnv(IsaacEnv):
             "stats": self.stats.clone(),
             "info": self.info
         }, self.batch_size)
-    # ==================== whole-body ====================
 
     def _compute_reward_and_done(self):
         reward = self.reward

@@ -879,15 +879,15 @@ class NavigationEnv(IsaacEnv):
 
         # c. velocity reward for goal direction
         vel_direction = rpos / distance.clamp_min(1e-6)
-        reward_vel = (self.drone.vel_w[..., :3] * vel_direction).sum(-1)#.clip(max=2.0)
+        reward_vel = (self.drone.vel_w[..., :3] * vel_direction).sum(-1, keepdim=True)#.clip(max=2.0)
         
         # d. smoothness reward for action smoothness
-        penalty_smooth = (self.drone.vel_w[..., :3] - self.prev_drone_vel_w).norm(dim=-1)
+        penalty_smooth = (self.drone.vel_w[..., :3] - self.prev_drone_vel_w).norm(dim=-1, keepdim=True)
 
         # ==================== whole-body ====================
         # e. Unified height reward: combines preference for optimal height and penalty for being out of bounds
         # The optimal height is dynamically set to the goal's z-coordinate.
-        optimal_height = self.target_pos[..., 2]  # Keep dimension: (num_envs, 1)
+        optimal_height = self.target_pos[..., 2]  # (num_envs, 1)
         height_sigma = getattr(self.cfg.env, "height_reward_sigma", 0.5)
         
         drone_height = self.drone.pos[..., 2]  # (num_envs,)
@@ -902,7 +902,7 @@ class NavigationEnv(IsaacEnv):
         # Combine preference and penalty into a single height reward term
         height_reward_weight = getattr(self.cfg.env, "height_reward_weight", 1.0)
         height_penalty_weight = getattr(self.cfg.env, "height_penalty_weight", 4.0)
-        reward_height = reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight  # (num_envs,)
+        reward_height = (reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight).unsqueeze(-1)  # (num_envs, 1)
         # ==================== whole-body ====================
 
 

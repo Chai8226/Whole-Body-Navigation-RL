@@ -1073,8 +1073,9 @@ class NavigationEnv(IsaacEnv):
             self.reward = self.reward.view(self.num_envs, -1)[:, :1]
 
         # -----------------Training Stats-----------------
-        # Ensure reward shape matches stats shape for accumulation
-        reward_for_stats = self.reward.squeeze(-1) if self.reward.shape[-1] == 1 else self.reward
+        reward_for_stats = (
+            self.reward if self.reward.shape[-1] == 1 else self.reward.reshape(self.num_envs, -1)[:, :1]
+        )
         self.stats["return"] += reward_for_stats
         self.stats["episode_len"][:] = self.progress_buf.unsqueeze(1)
         self.stats["reach_goal"] = reach_goal.float()

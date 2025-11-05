@@ -888,11 +888,11 @@ class NavigationEnv(IsaacEnv):
         optimal_height = self.target_pos[..., 2]  # (num_envs, 1)
         height_sigma = getattr(self.cfg.env, "height_reward_sigma", 0.5)
         
-        drone_height = self.drone.pos[..., 2:3]  # (num_envs, 1)
+        drone_height = self.drone.pos[..., 2].unsqueeze(-1)  # (num_envs, 1) - squeeze out drone dimension, add back column dimension
         height_diff = drone_height - optimal_height  # (num_envs, 1)
         reward_height_pref = torch.exp(-0.5 * (height_diff / height_sigma) ** 2)  # (num_envs, 1)
-        min_h = self.height_range[..., 0:1, 0]  # (num_envs, 1)
-        max_h = self.height_range[..., 0:1, 1]  # (num_envs, 1)
+        min_h = self.height_range[..., 0].unsqueeze(-1)  # (num_envs, 1)
+        max_h = self.height_range[..., 1].unsqueeze(-1)  # (num_envs, 1)
         out_of_bounds_lower = torch.clamp(min_h - drone_height, min=0.0)  # (num_envs, 1)
         out_of_bounds_upper = torch.clamp(drone_height - max_h, min=0.0)  # (num_envs, 1)
         penalty_out_of_bounds = out_of_bounds_lower**2 + out_of_bounds_upper**2  # (num_envs, 1)

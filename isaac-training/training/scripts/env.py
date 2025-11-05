@@ -1078,8 +1078,8 @@ class NavigationEnv(IsaacEnv):
         )
         self.stats["return"] += reward_for_stats
         self.stats["episode_len"][:] = self.progress_buf.unsqueeze(1)
-        self.stats["reach_goal"] = reach_goal.float()
-        self.stats["collision"] = collision.float()
+        self.stats["reach_goal"] = reach_goal.float().unsqueeze(-1)
+        self.stats["collision"] = collision.squeeze(-1).float().unsqueeze(-1)
         self.stats["truncated"] = self.truncated.float()
 
         return TensorDict({

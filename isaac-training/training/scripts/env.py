@@ -868,7 +868,7 @@ class NavigationEnv(IsaacEnv):
         safety_k = getattr(self.cfg.env, "safety_reward_k", 0.5)
         clearance_squared = self.lidar_scan ** 2
         reward_safety_static = safety_lambda * (1.0 - torch.exp(-safety_k * clearance_squared))
-        reward_safety_static = reward_safety_static.mean(dim=(2, 3), keepdim=True)  # Average over all rays, keep (N, 1)
+        reward_safety_static = reward_safety_static.mean(dim=(2, 3))  # Average over all rays
 
         # b. safety reward for dynamic obstacles
         if (self.cfg.env_dyn.num_obstacles != 0):
@@ -879,21 +879,21 @@ class NavigationEnv(IsaacEnv):
 
         # c. velocity reward for goal direction
         vel_direction = rpos / distance.clamp_min(1e-6)
-        reward_vel = (self.drone.vel_w[..., :3] * vel_direction).sum(-1, keepdim=True)  # .clip(max=2.0)
+        reward_vel = (self.drone.vel_w[..., :3] * vel_direction).sum(-1)#.clip(max=2.0)
         
         # d. smoothness reward for action smoothness
-        penalty_smooth = (self.drone.vel_w[..., :3] - self.prev_drone_vel_w).norm(dim=-1, keepdim=True)
+        penalty_smooth = (self.drone.vel_w[..., :3] - self.prev_drone_vel_w).norm(dim=-1)
 
         # ==================== whole-body ====================
         # e. Unified height reward: combines preference for optimal height and penalty for being out of bounds
         # The optimal height is dynamically set to the goal's z-coordinate.
-        optimal_height = self.target_pos[..., 2].squeeze(-1)
+        optimal_height = self.target_pos[..., 2]  # Keep dimension: (num_envs, 1)
         height_sigma = getattr(self.cfg.env, "height_reward_sigma", 0.5)
         
-        drone_height = self.drone.pos[..., 2]
+        drone_height = self.drone.pos[..., 2].unsqueeze(-1)  # Add dimension: (num_envs, 1)
         height_diff = drone_height - optimal_height
         reward_height_pref = torch.exp(-0.5 * (height_diff / height_sigma) ** 2)
-        min_h, max_h = self.height_range[..., 0], self.height_range[..., 1]
+        min_h, max_h = self.height_range[..., 0].unsqueeze(-1), self.height_range[..., 1].unsqueeze(-1)  # (num_envs, 1)
         out_of_bounds_lower = torch.clamp(min_h - drone_height, min=0.0)
         out_of_bounds_upper = torch.clamp(drone_height - max_h, min=0.0)
         penalty_out_of_bounds = out_of_bounds_lower**2 + out_of_bounds_upper**2
@@ -901,7 +901,7 @@ class NavigationEnv(IsaacEnv):
         # Combine preference and penalty into a single height reward term
         height_reward_weight = getattr(self.cfg.env, "height_reward_weight", 1.0)
         height_penalty_weight = getattr(self.cfg.env, "height_penalty_weight", 4.0)
-        reward_height = (reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight).unsqueeze(-1)
+        reward_height = reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight
         # ==================== whole-body ====================
 
 
@@ -995,8 +995,6 @@ class NavigationEnv(IsaacEnv):
                 - penalty_smooth * 0.1
                 + reward_height
             )
-        # enforce shape to (N, 1) to avoid accidental broadcasting
-        self.reward = self.reward.view(self.num_envs, 1)
         # ==================== whole-body ====================
         
 
@@ -1014,8 +1012,8 @@ class NavigationEnv(IsaacEnv):
 
         # # -----------------Training Stats-----------------
         self.stats["return"] += self.reward
-        self.stats["episode_len"][...] = self.progress_buf.unsqueeze(1)
-        self.stats["reach_goal"] = reach_goal.unsqueeze(-1).float()
+        self.stats["episode_len"][:] = self.progress_buf.unsqueeze(1)
+        self.stats["reach_goal"] = reach_goal.float()
         self.stats["collision"] = collision.float()
         self.stats["truncated"] = self.truncated.float()
 

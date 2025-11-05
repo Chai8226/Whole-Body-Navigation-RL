@@ -879,10 +879,10 @@ class NavigationEnv(IsaacEnv):
 
         # c. velocity reward for goal direction
         vel_direction = rpos / distance.clamp_min(1e-6)
-        reward_vel = (self.drone.vel_w[..., :3] * vel_direction).sum(-1)#.clip(max=2.0)
+        reward_vel = (self.drone.vel_w[..., :3] * vel_direction).sum(-1, keepdim=True)  # .clip(max=2.0)
         
         # d. smoothness reward for action smoothness
-        penalty_smooth = (self.drone.vel_w[..., :3] - self.prev_drone_vel_w).norm(dim=-1)
+        penalty_smooth = (self.drone.vel_w[..., :3] - self.prev_drone_vel_w).norm(dim=-1, keepdim=True)
 
         # ==================== whole-body ====================
         # e. Unified height reward: combines preference for optimal height and penalty for being out of bounds
@@ -901,7 +901,7 @@ class NavigationEnv(IsaacEnv):
         # Combine preference and penalty into a single height reward term
         height_reward_weight = getattr(self.cfg.env, "height_reward_weight", 1.0)
         height_penalty_weight = getattr(self.cfg.env, "height_penalty_weight", 4.0)
-        reward_height = reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight # Shape: (n, 1)
+        reward_height = (reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight).unsqueeze(-1)
         # ==================== whole-body ====================
 
 
@@ -995,6 +995,8 @@ class NavigationEnv(IsaacEnv):
                 - penalty_smooth * 0.1
                 + reward_height
             )
+        # enforce shape to (N, 1) to avoid accidental broadcasting
+        self.reward = self.reward.view(self.num_envs, 1)
         # ==================== whole-body ====================
         
 
@@ -1012,8 +1014,8 @@ class NavigationEnv(IsaacEnv):
 
         # # -----------------Training Stats-----------------
         self.stats["return"] += self.reward
-        self.stats["episode_len"][:] = self.progress_buf.unsqueeze(1)
-        self.stats["reach_goal"] = reach_goal.float()
+        self.stats["episode_len"][...] = self.progress_buf.unsqueeze(1)
+        self.stats["reach_goal"] = reach_goal.unsqueeze(-1).float()
         self.stats["collision"] = collision.float()
         self.stats["truncated"] = self.truncated.float()
 

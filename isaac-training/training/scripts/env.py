@@ -1067,6 +1067,12 @@ class NavigationEnv(IsaacEnv):
         # update previous velocity for smoothness calculation in the next iteration
         self.prev_drone_vel_w = self.drone.vel_w[..., :3].clone()
 
+        # Normalize reward shape to [num_envs, 1] before accumulating into stats
+        if self.reward.dim() == 1:
+            self.reward = self.reward.unsqueeze(-1)
+        elif self.reward.dim() > 2:
+            self.reward = self.reward.view(self.num_envs, -1)[:, :1]
+
         # -----------------Training Stats-----------------
         self.stats["return"] += self.reward
         self.stats["episode_len"][:] = self.progress_buf.unsqueeze(1)

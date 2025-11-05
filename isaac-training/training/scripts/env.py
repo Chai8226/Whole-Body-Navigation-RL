@@ -61,12 +61,11 @@ class NavigationEnv(IsaacEnv):
 
         # LiDAR Initialization (use precomputed vertical angles and beam count)
         ray_caster_cfg = RayCasterCfg(
-            prim_path="/World/envs/envs_0/Hummingbird_0/base_link",
+            prim_path="/World/envs/envs_.*/Hummingbird_0/base_link",
             offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0)),
             attach_yaw_only=True,
-            # attach_yaw_only=False,
             pattern_cfg=patterns.BpearlPatternCfg(
-                horizontal_res=self.lidar_hres, # horizontal default is set to 10
+                horizontal_res=self.lidar_hres,
                 vertical_ray_angles=self.vertical_ray_angles_deg
             ),
             debug_vis=False,

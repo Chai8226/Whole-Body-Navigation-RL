@@ -38,10 +38,10 @@ env:
   terminate_on_reach_goal: false      # whether to terminate the episode immediately upon reaching goal
   
   # Static horizontal beams configuration
-  num_static_beams: 50             # Number of horizontal beams
+  num_static_beams: 100             # Number of horizontal beams
   beam_length_range: [1.0, 10.0]    # Beam length range (m)
   beam_thickness_range: [0.5, 1.0]  # Beam thickness range (m)
-  beam_height_range: [0.5, 3.5]     # Beam height above ground (m)
+  beam_height_range: [0.5, 4.0]     # Beam height above ground (m)
   # ==================== whole-body ====================
 
   # ==================== whole-body curriculum (reward weights) ====================

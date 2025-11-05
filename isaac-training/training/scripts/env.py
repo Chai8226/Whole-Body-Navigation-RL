@@ -900,7 +900,8 @@ class NavigationEnv(IsaacEnv):
         # Combine preference and penalty into a single height reward term
         height_reward_weight = getattr(self.cfg.env, "height_reward_weight", 1.0)
         height_penalty_weight = getattr(self.cfg.env, "height_penalty_weight", 4.0)
-        reward_height = reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight  # (num_envs,)
+        reward_height = torch.zeros(self.num_envs, 1, device=self.device)
+        reward_height[:, 0] = reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight  # (num_envs, 1)
         # ==================== whole-body ====================
 
 

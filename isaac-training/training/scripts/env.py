@@ -877,10 +877,10 @@ class NavigationEnv(IsaacEnv):
 
         # c. velocity reward for goal direction
         vel_direction = rpos / distance.clamp_min(1e-6)
-        reward_vel = (self.drone.vel_w[..., :3] * vel_direction).sum(-1, keepdim=True)  # (num_envs,)
+        reward_vel = (self.drone.vel_w[..., :3] * vel_direction).sum(-1)  # (num_envs, 1)
         
         # d. smoothness reward for action smoothness
-        penalty_smooth = (self.drone.vel_w[..., :3] - self.prev_drone_vel_w).norm(dim=-1, keepdim=True)  # (num_envs,)
+        penalty_smooth = (self.drone.vel_w[..., :3] - self.prev_drone_vel_w).norm(dim=-1)  # (num_envs, 1)
 
         # ==================== whole-body ====================
         # e. Unified height reward: combines preference for optimal height and penalty for being out of bounds

@@ -868,7 +868,7 @@ class NavigationEnv(IsaacEnv):
         safety_k = getattr(self.cfg.env, "safety_reward_k", 0.5)
         clearance_squared = self.lidar_scan ** 2
         reward_safety_static = safety_lambda * (1.0 - torch.exp(-safety_k * clearance_squared))
-        reward_safety_static = reward_safety_static.mean(dim=(2, 3))  # Average over all rays
+        reward_safety_static = reward_safety_static.mean(dim=(2, 3), keepdim=True)  # Average over all rays, keep (N, 1)
 
         # b. safety reward for dynamic obstacles
         if (self.cfg.env_dyn.num_obstacles != 0):

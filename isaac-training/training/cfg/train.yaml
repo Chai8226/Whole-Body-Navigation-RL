@@ -32,10 +32,7 @@ env:
   safety_reward_lambda: 1.0      # Maximum reward value at infinite distance
   safety_reward_k: 0.5           # Decay rate: larger k = faster saturation
 
-  # Reach-goal bonus (one-time per episode)
-  reach_goal_distance_threshold: 0.5  # meters, within this distance counts as goal reached
-  reach_goal_bonus: 20.0              # scalar bonus added once when first reaching goal in an episode
-  terminate_on_reach_goal: false      # whether to terminate the episode immediately upon reaching goal
+  reach_goal_weight: 10.0
   
   # Static horizontal beams configuration
   num_static_beams: 100             # Number of horizontal beams

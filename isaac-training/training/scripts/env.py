@@ -963,16 +963,26 @@ class NavigationEnv(IsaacEnv):
         collision = static_collision | dynamic_collision
         
         # ==================== whole-body shape scan ====================
+        # g. reach goal reward
+        reach_goal_bonus = torch.zeros_like(reward_vel)
+        reach_goal_weight = getattr(self.cfg.env, "reach_goal_weight", 1.0)
+        
+        # Check if goal is reached for the first time in an episode
+        goal_reached_now = (distance.squeeze(-1) < 0.5)
+        newly_reached = goal_reached_now & ~self.reached_goal.squeeze(-1)
+        
+        if newly_reached.any():
+            reach_goal_bonus[newly_reached] = reach_goal_weight
+            self.reached_goal[newly_reached] = True
+
+        # ==================== whole-body shape scan ====================
         # Final reward calculation with curriculum weighting
         # Get reward weights and curriculum settings from config (with defaults)
         height_penalty_weight = getattr(self.cfg.env, "height_penalty_weight", 8.0)
 
         # Curriculum configuration
-        # Option A (preferred if set): piecewise by two step markers r1 and r2
         r1 = getattr(self.cfg.env, "curriculum_r1_steps", None)
         r2 = getattr(self.cfg.env, "curriculum_r2_steps", None)
-
-        # Option B (fallback): continuous schedule with total_steps and step_divisor
         total_steps = float(getattr(self.cfg.env, "curriculum_total_steps", 1_000_000))
         step_divisor = float(getattr(self.cfg.env, "curriculum_step_divisor", 1.0))
 
@@ -1036,6 +1046,7 @@ class NavigationEnv(IsaacEnv):
                 + reward_safety_dynamic * w_safety_dynamic
                 - penalty_smooth * 0.1
                 - penalty_height * height_penalty_weight
+                + reach_goal_bonus
             )
         else:
             self.reward = (
@@ -1044,42 +1055,27 @@ class NavigationEnv(IsaacEnv):
                 + reward_safety_static * w_safety_static
                 - penalty_smooth * 0.1
                 - penalty_height * height_penalty_weight
+                + reach_goal_bonus
             )
         # ==================== whole-body shape scan ====================
         
 
-        # Terminate Conditions & reach-goal bonus
-        goal_threshold = float(getattr(self.cfg.env, "reach_goal_distance_threshold", 0.5))
-        reach_goal = (distance.squeeze(-1) < goal_threshold)
-        newly_reached = reach_goal & (~self.reached_goal.squeeze(-1))
-        self.reached_goal = self.reached_goal | reach_goal.unsqueeze(-1)
-        reach_bonus_value = float(getattr(self.cfg.env, "reach_goal_bonus", 20.0))
-        reach_bonus = newly_reached.float() * reach_bonus_value
-        self.reward = self.reward + reach_bonus
-
+        # Terminate Conditions
+        reach_goal = (distance.squeeze(-1) < 0.5)
         below_bound = self.drone.pos[..., 2] < 0.2
         above_bound = self.drone.pos[..., 2] > 4.
-        terminate_on_goal = bool(getattr(self.cfg.env, "terminate_on_reach_goal", False))
-        self.terminated = below_bound | above_bound | collision | (reach_goal if terminate_on_goal else False)
+        self.terminated = below_bound | above_bound | collision
+        
         self.truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1) # progress buf is to track the step number
 
         # update previous velocity for smoothness calculation in the next iteration
         self.prev_drone_vel_w = self.drone.vel_w[..., :3].clone()
 
-        # Normalize reward shape to [num_envs, 1] before accumulating into stats
-        if self.reward.dim() == 1:
-            self.reward = self.reward.unsqueeze(-1)
-        elif self.reward.dim() > 2:
-            self.reward = self.reward.view(self.num_envs, -1)[:, :1]
-
-        # -----------------Training Stats-----------------
-        reward_for_stats = (
-            self.reward if self.reward.shape[-1] == 1 else self.reward.reshape(self.num_envs, -1)[:, :1]
-        )
-        self.stats["return"] += reward_for_stats
+        # # -----------------Training Stats-----------------
+        self.stats["return"] += self.reward
         self.stats["episode_len"][:] = self.progress_buf.unsqueeze(1)
-        self.stats["reach_goal"] = reach_goal.float().unsqueeze(-1)
-        self.stats["collision"] = collision.squeeze(-1).float().unsqueeze(-1)
+        self.stats["reach_goal"] = reach_goal.float()
+        self.stats["collision"] = collision.float()
         self.stats["truncated"] = self.truncated.float()
 
         return TensorDict({

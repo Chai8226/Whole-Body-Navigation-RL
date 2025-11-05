@@ -91,8 +91,8 @@ class Navigation(Node):
 
 
     def init_model(self, ckpt_file):
-        observation_dim = 8
-        num_dim_each_dyn_obs_state = 10
+        observation_dim = 7  # Changed from 8: 3(rpos_clipped_g) + 1(distance) + 3(vel_g)
+        num_dim_each_dyn_obs_state = 9  # Changed from 10: 3(rpos_gn) + 1(distance) + 3(vel_g) + 1(width) + 1(height)
         observation_spec = CompositeSpec({
             "agents": CompositeSpec({
                 "observation": CompositeSpec({
@@ -289,21 +289,18 @@ class Navigation(Node):
     def get_action(self, pos: torch.Tensor, vel: torch.Tensor, goal: torch.Tensor): # use world velocity
         rpos = goal - pos        
         distance = rpos.norm(dim=-1, keepdim=True)
-        distance_2d = rpos[..., :2].norm(dim=-1, keepdim=True)
-        distance_z = rpos[..., 2].unsqueeze(-1)
 
-
-        target_dir_2d = self.target_dir.clone()
-        target_dir_2d[2] = 0.
+        # Use 3D target direction
+        target_dir_3d = self.target_dir.clone()
 
         rpos_clipped = rpos / distance.clamp(1e-6) # start to goal direction
-        rpos_clipped_g = vec_to_new_frame(rpos_clipped, target_dir_2d).squeeze(0).squeeze(0)
+        rpos_clipped_g = vec_to_new_frame(rpos_clipped, target_dir_3d).squeeze(0).squeeze(0)
 
         # "relative" velocity
-        vel_g = vec_to_new_frame(vel, target_dir_2d).squeeze(0).squeeze(0) # goal velocity
+        vel_g = vec_to_new_frame(vel, target_dir_3d).squeeze(0).squeeze(0) # goal velocity
 
-        # drone_state = torch.cat([rpos_clipped, orientation, vel_g], dim=-1).squeeze(1)
-        drone_state = torch.cat([rpos_clipped_g, distance_2d, distance_z, vel_g], dim=-1).unsqueeze(0)
+        # drone_state uses 3D distance (dimension: 7 = 3 + 1 + 3)
+        drone_state = torch.cat([rpos_clipped_g, distance, vel_g], dim=-1).unsqueeze(0)
 
         # Lidar States
         lidar_scan = torch.tensor(self.raypoints, device=self.cfg.device)
@@ -316,15 +313,12 @@ class Navigation(Node):
         dynamic_obstacle_size = self.dynamic_obstacles[2].clone()
         closest_dyn_obs_rpos = dynamic_obstacle_pos - pos
         closest_dyn_obs_rpos[dynamic_obstacle_size[:, 2] == 0] = 0.
-        closest_dyn_obs_rpos[:, 2][dynamic_obstacle_size[:, 2] > 1] = 0.
-        closest_dyn_obs_rpos_g = vec_to_new_frame(closest_dyn_obs_rpos.unsqueeze(0), target_dir_2d).squeeze(0)
+        # Use 3D processing - no more forcing z=0 for tall obstacles
+        closest_dyn_obs_rpos_g = vec_to_new_frame(closest_dyn_obs_rpos.unsqueeze(0), target_dir_3d).squeeze(0)
         closest_dyn_obs_distance = closest_dyn_obs_rpos.norm(dim=-1, keepdim=True)
-        closest_dyn_obs_distance_2d = closest_dyn_obs_rpos_g[..., :2].norm(dim=-1, keepdim=True)
-        closest_dyn_obs_distance_z = closest_dyn_obs_rpos_g[..., 2].unsqueeze(-1)
         closest_dyn_obs_rpos_gn = closest_dyn_obs_rpos_g / closest_dyn_obs_distance.clamp(1e-6)
 
-
-        closest_dyn_obs_vel_g = vec_to_new_frame(dynamic_obstacle_vel.unsqueeze(0), target_dir_2d).squeeze(0)
+        closest_dyn_obs_vel_g = vec_to_new_frame(dynamic_obstacle_vel.unsqueeze(0), target_dir_3d).squeeze(0)
         
         obs_res = 0.25
         closest_dyn_obs_width = torch.max(dynamic_obstacle_size[:, 0], dynamic_obstacle_size[:, 1])
@@ -334,9 +328,8 @@ class Navigation(Node):
         closest_dyn_obs_height = dynamic_obstacle_size[:, 2]
         closest_dyn_obs_height[(closest_dyn_obs_height <= 1) & (closest_dyn_obs_height != 0)] = 1.
         closest_dyn_obs_height[closest_dyn_obs_height > 1] = 0.
-        # dyn_obs_states = torch.cat([closest_dyn_obs_rpos_g, closest_dyn_obs_vel_g, \
-        #                             closest_dyn_obs_width.unsqueeze(1), closest_dyn_obs_height.unsqueeze(1)], dim=-1).unsqueeze(0).unsqueeze(0)
-        dyn_obs_states = torch.cat([closest_dyn_obs_rpos_gn, closest_dyn_obs_distance_2d, closest_dyn_obs_distance_z, closest_dyn_obs_vel_g, \
+        # Use 3D distance (dimension: 9 = 3 + 1 + 3 + 1 + 1)
+        dyn_obs_states = torch.cat([closest_dyn_obs_rpos_gn, closest_dyn_obs_distance, closest_dyn_obs_vel_g, \
                                     closest_dyn_obs_width.unsqueeze(1), closest_dyn_obs_height.unsqueeze(1)], dim=-1).unsqueeze(0).unsqueeze(0)
         # states
         obs = TensorDict({
@@ -344,7 +337,7 @@ class Navigation(Node):
                 "observation": TensorDict({
                     "state": drone_state,
                     "lidar": lidar_scan,
-                    "direction": target_dir_2d,
+                    "direction": target_dir_3d,
                     "dynamic_obstacle": dyn_obs_states
                 })
             })

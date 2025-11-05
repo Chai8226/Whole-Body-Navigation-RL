@@ -206,23 +206,22 @@ def get_robot_state(pos, goal, vel, target_dir, device="cuda"):
     vel3[:2] = vel
 
     distance = np.linalg.norm(rpos)
-    distance_2d = np.linalg.norm(rpos[:2])
-    distance_z = 0
 
-    target_dir_2d = np.zeros(3)
-    target_dir_2d[:2] = target_dir
+    # Use 3D target direction
+    target_dir_3d = np.zeros(3)
+    target_dir_3d[:2] = target_dir
 
     rpos_clipped = rpos / max(distance, 1e-6)
 
     rpos_clipped_g = vec_to_new_frame(torch.tensor(rpos_clipped, dtype=torch.float),
-                                      torch.tensor(target_dir_2d, dtype=torch.float))
+                                      torch.tensor(target_dir_3d, dtype=torch.float))
     vel_g = vec_to_new_frame(torch.tensor(vel3, dtype=torch.float),
-                             torch.tensor(target_dir_2d, dtype=torch.float))
+                             torch.tensor(target_dir_3d, dtype=torch.float))
 
-    d2 = torch.tensor(distance_2d, dtype=torch.float).view(1, 1, 1)
-    dz = torch.tensor(distance_z, dtype=torch.float).view(1, 1, 1)
+    d = torch.tensor(distance, dtype=torch.float).view(1, 1, 1)
 
-    return torch.cat([rpos_clipped_g, d2, dz, vel_g], dim=-1).squeeze(0).to(device)
+    # Return 3D state (dimension: 7 = 3 + 1 + 3)
+    return torch.cat([rpos_clipped_g, d, vel_g], dim=-1).squeeze(0).to(device)
 
 # Raycasting (geometry-based)
 def ray_cast_distance(robot_pos, angle, obstacles, max_range=4.0, safety_margin=0.1):
@@ -328,28 +327,25 @@ def get_dyn_obs_state(pos, vel, robot_positions, robot_velocities, target_dir, r
     rel_pos_g = vec_to_new_frame(rel_pos, target_dir_3d)
     rel_vel_g = vec_to_new_frame(rel_vel, target_dir_3d)
 
-    # Distance components
-    dist_2d = rel_pos_g[:, :, :2].norm(dim=-1, keepdim=True)
-    dist_z = torch.zeros(num_dyn, 1, dtype=torch.float, device=device).unsqueeze(-1)
-    rel_pos_gn = rel_pos_g / rel_pos.norm(dim=-1, keepdim=True).clamp(min=1e-6)
+    # Use 3D distance (single scalar)
+    dist = rel_pos.norm(dim=-1, keepdim=True)
+    rel_pos_gn = rel_pos_g / dist.clamp(min=1e-6)
 
     # Width and height (for now fixed or placeholder)
     width = torch.zeros((num_dyn, 1), device=device)
     height = torch.zeros((num_dyn, 1), device=device)
 
-
-    # Compose state
+    # Compose state (dimension: 9 = 3 + 1 + 3 + 1 + 1)
     dyn_state = torch.cat([
         rel_pos_gn,         # (x, y, z) unit vec
-        dist_2d,            # [dx, dy]
-        dist_z,             # scalar
+        dist,               # 3D distance scalar
         rel_vel_g,          # (vx, vy, vz)
         width.unsqueeze(1), height.unsqueeze(1)       # size hints
     ], dim=-1).squeeze(1)
 
     # Pad if needed
     if num_dyn < max_num:
-        padding = torch.zeros((max_num - num_dyn, 10), device=device)
+        padding = torch.zeros((max_num - num_dyn, 9), device=device)
         dyn_state = torch.cat([dyn_state, padding], dim=0)
 
-    return dyn_state.unsqueeze(0).unsqueeze(0) # [1, 1, max_num, 10]
+    return dyn_state.unsqueeze(0).unsqueeze(0) # [1, 1, max_num, 9]

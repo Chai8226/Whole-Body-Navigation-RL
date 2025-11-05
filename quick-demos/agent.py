@@ -13,15 +13,15 @@ class Agent:
 
     # PPO policy loader
     def init_model(self):
-        observation_dim = 8
-        num_dim_each_dyn_obs_state = 10
+        observation_dim = 7  # Changed from 8: 3(rpos_clipped_g) + 1(distance) + 3(vel_g)
+        num_dim_each_dyn_obs_state = 9  # Changed from 10: 3(rpos_gn) + 1(distance) + 3(vel_g) + 1(width) + 1(height)
         observation_spec = CompositeSpec({
             "agents": CompositeSpec({
                 "observation": CompositeSpec({
                     "state": UnboundedContinuousTensorSpec((observation_dim,), device=self.device), 
                     "lidar": UnboundedContinuousTensorSpec((1, 36, 4), device=self.device),
                     "direction": UnboundedContinuousTensorSpec((1, 3), device=self.device),
-                    "dynamic_obstacle": UnboundedContinuousTensorSpec((1, 5, 10), device=self.device),
+                    "dynamic_obstacle": UnboundedContinuousTensorSpec((1, 5, num_dim_each_dyn_obs_state), device=self.device),
                 }),
             }).expand(1)
         }, shape=[1], device=self.device)

@@ -20,8 +20,8 @@ class policy_server:
         self.policy.eval()
 
     def init_model(self):
-        observation_dim = 8
-        num_dim_each_dyn_obs_state = 10
+        observation_dim = 7  # Changed from 8: 3(rpos_clipped_g) + 1(distance) + 3(vel_g)
+        num_dim_each_dyn_obs_state = 9  # Changed from 10: 3(rpos_gn) + 1(distance) + 3(vel_g) + 1(width) + 1(height)
         observation_spec = CompositeSpec({
             "agents": CompositeSpec({
                 "observation": CompositeSpec({
@@ -54,7 +54,7 @@ class policy_server:
         # Assume req contains observation data in the necessary format
         drone_state = torch.tensor(req.state, device=self.cfg.device).view(req.state_shape)
         lidar_scan = torch.tensor(req.lidar, device=self.cfg.device).view(req.lidar_shape)
-        target_dir_2d = torch.tensor(req.direction, device=self.cfg.device).view(req.direction_shape)
+        target_dir_3d = torch.tensor(req.direction, device=self.cfg.device).view(req.direction_shape)
         dyn_obs_states = torch.tensor(req.dynamic_obstacle, device=self.cfg.device).view(req.dynamic_obstacle_shape)
         
         obs = TensorDict({
@@ -62,7 +62,7 @@ class policy_server:
                 "observation": TensorDict({
                     "state": drone_state,
                     "lidar": lidar_scan,
-                    "direction": target_dir_2d,
+                    "direction": target_dir_3d,
                     "dynamic_obstacle": dyn_obs_states
                 })
             })

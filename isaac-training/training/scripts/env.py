@@ -985,7 +985,7 @@ class NavigationEnv(IsaacEnv):
                 + reward_safety_static * w_safety_static
                 + reward_safety_dynamic * w_safety_dynamic
                 - penalty_smooth * 0.1
-                + reward_height 
+                # + reward_height 
             )
         else:
             self.reward = (
@@ -993,7 +993,7 @@ class NavigationEnv(IsaacEnv):
                 + base_bias
                 + reward_safety_static * w_safety_static
                 - penalty_smooth * 0.1
-                + reward_height
+                # + reward_height
             )
         # ==================== whole-body ====================
         

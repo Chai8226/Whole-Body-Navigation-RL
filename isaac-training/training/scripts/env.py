@@ -885,22 +885,25 @@ class NavigationEnv(IsaacEnv):
         # ==================== whole-body ====================
         # e. Unified height reward: combines preference for optimal height and penalty for being out of bounds
         # The optimal height is dynamically set to the goal's z-coordinate.
-        optimal_height = self.target_pos[..., 2]  # (num_envs, 1)
+        optimal_height = self.target_pos[:, 0, 2]  # (num_envs,)
         height_sigma = getattr(self.cfg.env, "height_reward_sigma", 0.5)
         
-        drone_height = self.drone.pos[..., 2].unsqueeze(-1)  # (num_envs, 1) - squeeze out drone dimension, add back column dimension
-        height_diff = drone_height - optimal_height  # (num_envs, 1)
-        reward_height_pref = torch.exp(-0.5 * (height_diff / height_sigma) ** 2)  # (num_envs, 1)
-        min_h = self.height_range[..., 0].unsqueeze(-1)  # (num_envs, 1)
-        max_h = self.height_range[..., 1].unsqueeze(-1)  # (num_envs, 1)
-        out_of_bounds_lower = torch.clamp(min_h - drone_height, min=0.0)  # (num_envs, 1)
-        out_of_bounds_upper = torch.clamp(drone_height - max_h, min=0.0)  # (num_envs, 1)
-        penalty_out_of_bounds = out_of_bounds_lower**2 + out_of_bounds_upper**2  # (num_envs, 1)
+        drone_height = self.drone.pos[..., 2]  # (num_envs,) or (num_envs, 1)
+        if drone_height.dim() > 1:
+            drone_height = drone_height.squeeze(-1)  # ensure (num_envs,)
+        height_diff = drone_height - optimal_height  # (num_envs,)
+        reward_height_pref = torch.exp(-0.5 * (height_diff / height_sigma) ** 2)  # (num_envs,)
+        
+        min_h = self.height_range[:, 0, 0]  # (num_envs,)
+        max_h = self.height_range[:, 0, 1]  # (num_envs,)
+        out_of_bounds_lower = torch.clamp(min_h - drone_height, min=0.0)  # (num_envs,)
+        out_of_bounds_upper = torch.clamp(drone_height - max_h, min=0.0)  # (num_envs,)
+        penalty_out_of_bounds = out_of_bounds_lower**2 + out_of_bounds_upper**2  # (num_envs,)
         
         # Combine preference and penalty into a single height reward term
         height_reward_weight = getattr(self.cfg.env, "height_reward_weight", 1.0)
         height_penalty_weight = getattr(self.cfg.env, "height_penalty_weight", 4.0)
-        reward_height = reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight  # (num_envs, 1)
+        reward_height = (reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight).unsqueeze(-1)  # (num_envs, 1)
         # ==================== whole-body ====================
 
 

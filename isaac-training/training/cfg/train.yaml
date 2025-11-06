@@ -69,8 +69,8 @@ viewer:
   resolution: [960, 720]
 
 wandb:
-  project: wb
-  name: wb
-  entity: chai8226-sichuan-university
+  project: whole_body_navrl
+  name: omni-wb
+  entity: zftyz-polyu
   mode: offline # online
   run_id: #kw9xf9k9

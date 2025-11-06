@@ -972,6 +972,9 @@ class NavigationEnv(IsaacEnv):
                     f"[Curriculum] step={effective_step_display} p={p:.4f} "
                     f"w_vel={w_vel:.3f} w_safety={w_safety_static:.3f}"
                 )
+         # g. Reward for reaching the goal
+        reach_goal = (distance.squeeze(-1) < 0.5)
+        reward_reach_goal = reach_goal.float() * 10.0
 
         if (self.cfg.env_dyn.num_obstacles != 0):
             self.reward = (
@@ -980,7 +983,8 @@ class NavigationEnv(IsaacEnv):
                 + reward_safety_static * w_safety_static
                 + reward_safety_dynamic * w_safety_dynamic
                 - penalty_smooth * 0.1
-                + reward_height 
+                - penalty_height * height_penalty_weight
+                + reward_reach_goal
             )
         else:
             self.reward = (
@@ -988,13 +992,14 @@ class NavigationEnv(IsaacEnv):
                 + base_bias
                 + reward_safety_static * w_safety_static
                 - penalty_smooth * 0.1
-                + reward_height
+                - penalty_height * height_penalty_weight
+                + reward_reach_goal
             )
         # ==================== whole-body ====================
         
 
         # Terminate Conditions
-        reach_goal = (distance.squeeze(-1) < 0.5)
+        # reach_goal = (distance.squeeze(-1) < 0.5)
 
         below_bound = self.drone.pos[..., 2] < 0.2
         above_bound = self.drone.pos[..., 2] > 4.

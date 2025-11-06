@@ -18,7 +18,7 @@ env:
   num_envs: 2 # Number of drones for training
   max_episode_length: 2200
   env_spacing: 8.0 
-  num_obstacles: 200
+  num_obstacles: 300
 
   # ==================== whole-body ====================
   # Unified height reward: combines preference for an optimal height with penalties for being out of bounds
@@ -46,6 +46,13 @@ env:
   curriculum_step_divisor: 1.0        # Divide raw env steps to slow progression if needed
   curriculum_r1_steps: 20000       
   curriculum_r2_steps: 50000    
+
+  # ==================== whole-body obstacles curriculum ====================
+  initial_obstacles: 200 # initial obatacles when curriculum start
+  
+  obstacle_curriculum_step_interval: 1000
+  
+  obstacle_curriculum_step_increment: 20
 
   # Linear schedules for weights: w = start + (end - start) * p
   vel_weight_start: 3.0

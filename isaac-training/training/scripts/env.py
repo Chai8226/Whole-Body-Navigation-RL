@@ -640,15 +640,12 @@ class NavigationEnv(IsaacEnv):
             # generate random positions
             target_pos = 48. * torch.rand(env_ids.size(0), 1, 3, dtype=torch.float, device=self.device) + (-24.)
             heights = 0.5 + torch.rand(env_ids.size(0), dtype=torch.float, device=self.device) * (2.5 - 0.5)
-            target_pos[:, 0, 2] = heights# height
+            target_pos[:, 0, 2] = heights
             target_pos = target_pos * selected_masks + selected_shifts
             
             # apply target pos
             self.target_pos[env_ids] = target_pos
-
-            # self.target_pos[:, 0, 0] = torch.linspace(-0.5, 0.5, self.num_envs) * 32.
-            # self.target_pos[:, 0, 1] = 24.
-            # self.target_pos[:, 0, 2] = 2.    
+   
         else:
             self.target_pos[:, 0, 0] = torch.linspace(-0.5, 0.5, self.num_envs) * 32.
             self.target_pos[:, 0, 1] = -24.
@@ -667,13 +664,9 @@ class NavigationEnv(IsaacEnv):
             # generate random positions
             pos = 48. * torch.rand(env_ids.size(0), 1, 3, dtype=torch.float, device=self.device) + (-24.)
             heights = 0.5 + torch.rand(env_ids.size(0), dtype=torch.float, device=self.device) * (2.5 - 0.5)
-            pos[:, 0, 2] = heights# height
+            pos[:, 0, 2] = heights
             pos = pos * selected_masks + selected_shifts
             
-            # pos = torch.zeros(len(env_ids), 1, 3, device=self.device)
-            # pos[:, 0, 0] = (env_ids / self.num_envs - 0.5) * 32.
-            # pos[:, 0, 1] = -24.
-            # pos[:, 0, 2] = 2.
         else:
             pos = torch.zeros(len(env_ids), 1, 3, device=self.device)
             pos[:, 0, 0] = (env_ids / self.num_envs - 0.5) * 32.

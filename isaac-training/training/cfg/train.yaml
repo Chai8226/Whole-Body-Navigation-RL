@@ -35,10 +35,10 @@ env:
   reach_goal_weight: 10.0
   
   # Static horizontal beams configuration
-  num_static_beams: 100             # Number of horizontal beams
-  beam_length_range: [1.0, 10.0]    # Beam length range (m)
-  beam_thickness_range: [0.5, 1.0]  # Beam thickness range (m)
-  beam_height_range: [0.5, 4.0]     # Beam height above ground (m)
+  num_static_beams: 40              # Number of horizontal beams
+  beam_length_range: [1.0, 8.0]    # Beam length range (m)
+  beam_thickness_range: [0.3, 0.8]  # Beam thickness range (m)
+  beam_height_range: [0.3, 5.0]     # Beam height above ground (m)
   # ==================== whole-body ====================
 
   # ==================== whole-body curriculum (reward weights) ====================

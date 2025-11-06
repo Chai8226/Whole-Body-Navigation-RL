@@ -48,7 +48,7 @@ env:
   curriculum_r2_steps: 50000    
 
   # Linear schedules for weights: w = start + (end - start) * p
-  vel_weight_start: 2.5
+  vel_weight_start: 3.0
   vel_weight_end: 1.5
   safety_weight_start: 0.5
   safety_weight_end: 1.0

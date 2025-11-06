@@ -957,7 +957,7 @@ class NavigationEnv(IsaacEnv):
         w_safety_static = safety_w_start + (safety_w_end - safety_w_start) * p
         w_safety_dynamic = safety_dyn_w_start + (safety_dyn_w_end - safety_dyn_w_start) * p
 
-        base_bias = 1.0
+        base_bias = 0.5
 
         # Optional curriculum logging: every N steps in training, once at start in eval
         log_interval = int(getattr(self.cfg.env, "curriculum_log_interval", 1000))

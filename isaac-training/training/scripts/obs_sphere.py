@@ -52,6 +52,7 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
     cylinder_height_range = [1.0, 6.0]
     cylinder_radius_range = [0.2, 0.8]
     sphere_radius_range = [0.5, 1.5]
+    clearance_range = (0.1, 1.5)
     
     obstacle_list = []
 
@@ -60,7 +61,9 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
         x = float(np.random.uniform(-map_range[0], map_range[0]))
         y = float(np.random.uniform(-map_range[1], map_range[1]))
         size = float(np.random.uniform(*cube_size_range))
-        z = size / 2.0
+        # z = size / 2.0
+        clearance = float(np.random.uniform(*clearance_range))
+        z = size / 2.0 + clearance
         
         cube_cfg = RigidObjectCfg(
             prim_path=f"/World/static_obstacles/cube_{i}",
@@ -108,7 +111,8 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
         x = float(np.random.uniform(-map_range[0], map_range[0]))
         y = float(np.random.uniform(-map_range[1], map_range[1]))
         radius = float(np.random.uniform(*sphere_radius_range))
-        z = radius
+        clearance = float(np.random.uniform(*clearance_range))
+        z = radius + clearance
 
         sphere_cfg = RigidObjectCfg(
             prim_path=f"/World/static_obstacles/sphere_{i}",

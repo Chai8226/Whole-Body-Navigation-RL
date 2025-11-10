@@ -35,7 +35,7 @@ env:
   reach_goal_weight: 10.0
 
   # Switch Maps(obs_sphere, obs_vanilla, obs_oblique)
-  map_name: "sphere"
+  map_name: "hole"
   
   # Static horizontal beams configuration
   num_static_beams: 40              # Number of horizontal beams

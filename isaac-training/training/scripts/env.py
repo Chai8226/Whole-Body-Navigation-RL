@@ -24,7 +24,7 @@ from omni_drones.utils.torch import quat_rotate_inverse
 import importlib
 
 
-from obs_hole import spawn_static_obstacles, DynamicObstacleManager
+# from obs_hole import spawn_static_obstacles, DynamicObstacleManager
 
 
 
@@ -55,21 +55,27 @@ class NavigationEnv(IsaacEnv):
         self.lidar_vbeams_ext = self.lidar_vbeams + 2
 
 
-        # # === 在这里添加动态导入代码 ===
-        # # 从 cfg (train.yaml) 获取模块名称, 默认为 'obs_oblique'
-        # obstacle_module_name = str(getattr(self.cfg.env, "obstacle_module", "obs_oblique"))
-        # print(f"[Navigation Environment]: Loading Map: {obstacle_module_name}")
+# === 在这里添加动态导入代码 (正确的位置) ===
         
-        # try:
-        #     # 动态导入指定的模块
-        #     obs_module = importlib.import_module(obstacle_module_name)
-        # except ImportError as e:
-        #     logging.error(f"Error: Can not load Map '{obstacle_module_name}'. Back to 'obs_vanilla'. Error: {e}")
-        #     import obs_vanilla as obs_module # 导入默认模块作为后备
+        # 1. 从传入的 'cfg' 参数中获取 map_name
+        #    我们在这里使用局部变量 'cfg'，因为它在 __init__ 的开头立即可用。
+        map_name = cfg.env.map_name 
+        obstacle_module_name = f"obs_{map_name}"
+        print(f"[Navigation Environment]: Loading Map: {obstacle_module_name}.py")
         
-        # # 将导入的函数和类存储在 'self' 上，以便在其他方法中使用
-        # self.spawn_static_obstacles = obs_module.spawn_static_obstacles
-        # self.DynamicObstacleManager = obs_module.DynamicObstacleManager
+        try:
+            # 2. 动态导入指定的模块
+            obs_module = importlib.import_module(obstacle_module_name)
+        except ImportError as e:
+            # 导入默认模块作为后备 (假设你有一个 'obs_vanilla.py' 作为备用)
+            logging.error(f"Error: Can not load Map '{obstacle_module_name}'. Back to 'obs_vanilla'. Error: {e}")
+            import obs_vanilla as obs_module 
+        
+        # 3. 将导入的函数和类存储在 'self' 上
+        #    这样 _design_scene 才能在 super().__init__ 内部找到它们
+        self.spawn_static_obstacles = obs_module.spawn_static_obstacles
+        self.DynamicObstacleManager = obs_module.DynamicObstacleManager
+        # --- 动态导入结束 ---
         
         super().__init__(cfg, cfg.headless)
 
@@ -306,10 +312,10 @@ class NavigationEnv(IsaacEnv):
 
         # --- 开始重构 ---
         # 生成静态障碍物 (地形和横梁)
-        spawn_static_obstacles(self.cfg, self.num_envs, self.map_range)
+        self.spawn_static_obstacles(self.cfg, self.num_envs, self.map_range)
 
         # 生成动态障碍物
-        self.dyn_obs_manager = DynamicObstacleManager(self.cfg, self.map_range, self.device)
+        self.dyn_obs_manager = self.DynamicObstacleManager(self.cfg, self.map_range, self.device)
         # --- 结束重构 ---
 
 

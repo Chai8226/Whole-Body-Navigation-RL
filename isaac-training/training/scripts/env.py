@@ -9,7 +9,7 @@ from omni_drones.envs.isaac_env import IsaacEnv, AgentSpec
 import omni.isaac.orbit.sim as sim_utils
 from omni_drones.robots.drone import MultirotorBase
 from omni.isaac.orbit.assets import AssetBaseCfg
-from omni.isaac.orbit.terrains import TerrainImporterCfg, TerrainImporter, TerrainGeneratorCfg, HfDiscreteObstaclesTerrainCfg
+# 删除了 Terrain 和 RigidObject 的导入
 from omni_drones.utils.torch import euler_to_quaternion, quat_axis
 from omni.isaac.orbit.sensors import RayCaster, RayCasterCfg, patterns
 from omni.isaac.core.utils.viewports import set_camera_view
@@ -17,23 +17,27 @@ from utils import vec_to_new_frame, vec_to_world, construct_input
 import omni.isaac.core.utils.prims as prim_utils
 import omni.isaac.orbit.sim as sim_utils
 import omni.isaac.orbit.utils.math as math_utils
-from omni.isaac.orbit.assets import RigidObject, RigidObjectCfg
+# 删除了 RigidObject 的导入
 import time
-# Add body-frame rotation utility for shape-based dynamic obstacle handling
+# 为基于形状的动态障碍物处理添加机身坐标系旋转工具
 from omni_drones.utils.torch import quat_rotate_inverse
+
+# 导入新的障碍物管理器
+from obs_sphere import spawn_static_obstacles, DynamicObstacleManager
+
 
 class NavigationEnv(IsaacEnv):
 
-    # In one step:
-    # 1. _pre_sim_step (apply action) -> step isaac sim
-    # 2. _post_sim_step (update lidar)
-    # 3. increment progress_buf
-    # 4. _compute_state_and_obs (get observation and states, update stats)
-    # 5. _compute_reward_and_done (update reward and calculate returns)
+    # 在一个步骤中:
+    # 1. _pre_sim_step (应用动作) -> 步进 isaac sim
+    # 2. _post_sim_step (更新 lidar)
+    # 3. 增加 progress_buf
+    # 4. _compute_state_and_obs (获取观测和状态, 更新统计数据)
+    # 5. _compute_reward_and_done (更新奖励并计算回报)
     
     def __init__(self, cfg):
-        print("[Navigation Environment]: Initializing Env...")
-        # LiDAR params:
+        print("[Navigation Environment]: 正在初始化环境...")
+        # LiDAR 参数:
         self.lidar_range = cfg.sensor.lidar_range
         self.lidar_vfov = (max(-89., cfg.sensor.lidar_vfov[0]), min(89., cfg.sensor.lidar_vfov[1]))
         self.lidar_vbeams = cfg.sensor.lidar_vbeams
@@ -50,16 +54,16 @@ class NavigationEnv(IsaacEnv):
 
         super().__init__(cfg, cfg.headless)
         
-        # Drone Initialization
+        # 无人机初始化
         self.drone.initialize()
         self.init_vels = torch.zeros_like(self.drone.get_velocities())
         
-        # Global curriculum step counter (counts env steps during training)
+        # 全局课程步数计数器 (计算训练期间的环境步数)
         self.curriculum_step = 0
         self._last_training_flag = bool(self.training)
         self._curriculum_step_checkpoint = 0
 
-        # LiDAR Initialization (use precomputed vertical angles and beam count)
+        # LiDAR 初始化 (使用预先计算的垂直角度和光束数)
         ray_caster_cfg = RayCasterCfg(
             prim_path="/World/envs/env_.*/Hummingbird_0/base_link",
             offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0)),
@@ -76,16 +80,16 @@ class NavigationEnv(IsaacEnv):
         self.lidar_resolution = (self.lidar_hbeams, self.lidar_vbeams_ext)
         
         # ==================== whole-body shape scan ====================
-        # Compute robot shape scan: distance from center to surface along each ray
+        # 计算机器人形状扫描：从中心到每个射线方向上最外层表面的距离
         self.shape_scan = self._compute_shape_scan(cfg.drone.marker.shape)
-        print(f"Computed shape_scan with shape: {self.shape_scan.shape}")
+        print(f"计算得到的 shape_scan 形状为: {self.shape_scan.shape}")
         # ==================== whole-body shape scan ====================
 
-        # start and target
+        # 起点和目标
         with torch.device(self.device):
             self.target_pos = torch.zeros(self.num_envs, 1, 3)
             
-            # Coordinate change: add target direction variable
+            # 坐标变更：添加目标方向变量
             self.target_dir = torch.zeros(self.num_envs, 1, 3)
             self.height_range = torch.zeros(self.num_envs, 1, 2)
             self.prev_drone_vel_w = torch.zeros(self.num_envs, 1 , 3)
@@ -93,24 +97,24 @@ class NavigationEnv(IsaacEnv):
     # ==================== whole-body ====================
     def _compute_shape_scan(self, shape_name):
         """
-        Compute distance from robot center to the outermost surface along each ray direction.
-        This creates a shape scan with the same dimensions as lidar_scan.
-        Returns the MAXIMUM distance along each ray to represent the robot's outer boundary.
+        计算从机器人中心到每个射线方向上最外层表面的距离。
+        这将创建一个与 lidar_scan 具有相同维度的形状扫描。
+        返回每个射线方向上的最大距离，以表示机器人的外部边界。
         
         Args:
-            shape_name: Name of the OBJ file (without .obj extension)
+            shape_name: OBJ 文件名 (不带 .obj 扩展名)
             
         Returns:
-            torch.Tensor: Shape scan with dimensions (1, lidar_hbeams, lidar_vbeams_ext)
+            torch.Tensor: 形状扫描，维度为 (1, lidar_hbeams, lidar_vbeams_ext)
         """
         obj_folder = os.path.join(os.path.dirname(__file__), "..", "obj")
         obj_file = os.path.join(obj_folder, f"{shape_name}.obj")
         
         if not os.path.exists(obj_file):
-            print(f"OBJ file not found: {obj_file}, using zero shape scan")
+            print(f"未找到 OBJ 文件: {obj_file}, 使用零形状扫描")
             return torch.zeros(1, self.lidar_hbeams, self.lidar_vbeams_ext, device=self.device)
         
-        # Parse OBJ file to get vertices and faces
+        # 解析 OBJ 文件以获取顶点和面
         vertices = []
         faces = []
         with open(obj_file, 'r') as f:
@@ -125,32 +129,32 @@ class NavigationEnv(IsaacEnv):
                     faces.append(face)
         
         if not vertices or not faces:
-            print(f"Invalid OBJ file: {obj_file}, using zero shape scan")
+            print(f"无效的 OBJ 文件: {obj_file}, 使用零形状扫描")
             return torch.zeros(1, self.lidar_hbeams, self.lidar_vbeams_ext, device=self.device)
         
         vertices = np.array(vertices)
         faces = np.array(faces)
         
-        # Generate ray directions matching the LiDAR pattern
-        # Horizontal angles: 0 to 360 degrees
+        # 生成匹配 LiDAR 模式的射线方向
+        # 水平角度: 0 到 360 度
         horizontal_angles = np.linspace(0, 2 * np.pi, self.lidar_hbeams, endpoint=False)
-        # Vertical angles: use extended list including +/-90 deg
+        # 垂直角度: 使用包括 +/-90 度的扩展列表
         vertical_angles = np.deg2rad(self.vertical_ray_angles_deg.cpu().numpy())
         
         shape_distances = np.zeros((self.lidar_hbeams, self.lidar_vbeams_ext))
         
-        # For each ray direction, compute intersection with robot mesh
+        # 对于每个射线方向，计算与机器人网格的交点
         for h_idx, h_angle in enumerate(horizontal_angles):
             for v_idx, v_angle in enumerate(vertical_angles):
-                # Convert spherical to Cartesian coordinates
-                # x: forward, y: left, z: up
+                # 将球坐标转换为笛卡尔坐标
+                # x: 前, y: 左, z: 上
                 ray_dir = np.array([
                     np.cos(v_angle) * np.cos(h_angle),  # x
                     np.cos(v_angle) * np.sin(h_angle),  # y
                     np.sin(v_angle)                      # z
                 ])
                 
-                # Find intersection with mesh
+                # 查找与网格的交点
                 max_distance = self._ray_mesh_intersection(
                     ray_origin=np.array([0.0, 0.0, 0.0]),
                     ray_direction=ray_dir,
@@ -160,18 +164,18 @@ class NavigationEnv(IsaacEnv):
                 
                 shape_distances[h_idx, v_idx] = max_distance
         
-        # Convert to torch tensor
+        # 转换为 torch 张量
         shape_scan = torch.tensor(shape_distances, dtype=torch.float32, device=self.device)
-        shape_scan = shape_scan.unsqueeze(0)  # Add batch dimension: (1, H, Vext)
+        shape_scan = shape_scan.unsqueeze(0)  # 添加批次维度: (1, H, Vext)
         
-        print(f"Shape scan statistics - min: {shape_scan.min():.4f}, max: {shape_scan.max():.4f}, mean: {shape_scan.mean():.4f}")
+        print(f"形状扫描统计 - 最小值: {shape_scan.min():.4f}, 最大值: {shape_scan.max():.4f}, 平均值: {shape_scan.mean():.4f}")
         
-        # Save shape_scan data to file for visualization
+        # 将 shape_scan 数据保存到文件以便可视化
         save_folder = os.path.join(os.path.dirname(__file__), "..", "shape_scan_data")
         os.makedirs(save_folder, exist_ok=True)
         save_file = os.path.join(save_folder, f"{shape_name}_shape_scan.npz")
         
-        # Save both the shape_scan and metadata
+        # 保存 shape_scan 和元数据
         np.savez(
             save_file,
             shape_scan=shape_scan.cpu().numpy(),
@@ -182,42 +186,42 @@ class NavigationEnv(IsaacEnv):
             horizontal_angles=horizontal_angles,
             vertical_angles=vertical_angles,
         )
-        print(f"Shape scan saved to: {save_file}")
+        print(f"形状扫描已保存至: {save_file}")
         
         return shape_scan
     
     def _ray_mesh_intersection(self, ray_origin, ray_direction, vertices, faces):
         """
-        Compute the farthest intersection distance between a ray and a triangle mesh.
-        Uses Möller-Trumbore ray-triangle intersection algorithm.
-        This returns the maximum distance to represent the outermost surface of the robot.
+        计算射线与三角网格之间的最远交点距离。
+        使用 Möller-Trumbore 射线-三角形相交算法。
+        这返回最大距离以表示机器人的最外层表面。
         
         Args:
-            ray_origin: Origin of the ray (3,)
-            ray_direction: Direction of the ray (3,), should be normalized
-            vertices: Mesh vertices (N, 3)
-            faces: Mesh faces (M, 3), indices into vertices
+            ray_origin: 射线的起点 (3,)
+            ray_direction: 射线的方向 (3,), 应归一化
+            vertices: 网格顶点 (N, 3)
+            faces: 网格面 (M, 3), 顶点的索引
             
         Returns:
-            float: Distance to farthest intersection, or 0 if no intersection
+            float: 到最远交点的距离，如果没有交点则为 0
         """
         epsilon = 1e-6
-        max_distance = 0.0  # Changed from min_distance to max_distance
+        max_distance = 0.0  # 从 min_distance 更改为 max_distance
         
-        # Normalize ray direction
+        # 归一化射线方向
         ray_direction = ray_direction / (np.linalg.norm(ray_direction) + epsilon)
         
-        # Check intersection with each triangle
+        # 检查与每个三角形的交点
         for face in faces:
             v0, v1, v2 = vertices[face[0]], vertices[face[1]], vertices[face[2]]
             
-            # Möller-Trumbore algorithm
+            # Möller-Trumbore 算法
             edge1 = v1 - v0
             edge2 = v2 - v0
             h = np.cross(ray_direction, edge2)
             a = np.dot(edge1, h)
             
-            # Ray is parallel to triangle
+            # 射线与三角形平行
             if abs(a) < epsilon:
                 continue
             
@@ -234,37 +238,37 @@ class NavigationEnv(IsaacEnv):
             if v < 0.0 or u + v > 1.0:
                 continue
             
-            # Compute intersection distance
+            # 计算交点距离
             t = f * np.dot(edge2, q)
             
-            # Valid intersection (in front of ray origin)
-            # Take the MAXIMUM distance to get the outermost surface
+            # 有效交点 (在射线起点前方)
+            # 取最大距离以获得最外层表面
             if t > epsilon:
                 max_distance = max(max_distance, t)
         
-        # Return 0 if no intersection found (ray doesn't hit the mesh)
+        # 如果未找到交点 (射线未击中网格)，则返回 0
         return max_distance
     # ==================== whole-body ====================
 
     def _design_scene(self):
-        # Initialize a drone in prim /World/envs/envs_0
-        drone_model = MultirotorBase.REGISTRY[self.cfg.drone.model_name] # drone model class
+        # 在 prim /World/envs/envs_0 中初始化无人机
+        drone_model = MultirotorBase.REGISTRY[self.cfg.drone.model_name] # 无人机模型类
         cfg = drone_model.cfg_cls(force_sensor=False)
-        # optional: attach a visualization-only marker at drone center (base_link)
+        # 可选：在无人机中心 (base_link) 附加一个仅用于可视化的标记
         marker_cfg = getattr(self.cfg.drone, "marker", None)
 
         # ==================== whole-body visualization marker ====================
-        # Now we load precise geometry from OBJ files instead of using simple shapes or points
+        # 现在我们从 OBJ 文件加载精确的几何形状，而不是使用简单的形状或点
         if marker_cfg is not None and bool(marker_cfg.enable):
                 cfg.center_marker = True
-                # shape: OBJ file name (without .obj extension)
+                # shape: OBJ 文件名 (不带 .obj 扩展名)
                 if hasattr(marker_cfg, "shape"):  
                     cfg.center_marker_shape = str(marker_cfg.shape)
-                # color: RGB tuple
+                # color: RGB 元组
                 if hasattr(marker_cfg, "color"):
                     cfg.center_marker_color = tuple(float(v) for v in marker_cfg.color)
                 
-                print(f"Enabling whole-body visualization with OBJ file: {cfg.center_marker_shape}.obj")
+                print(f"启用全身可视化，使用 OBJ 文件: {cfg.center_marker_shape}.obj")
         else:
             cfg.center_marker = False
         # ====================================================================
@@ -273,7 +277,7 @@ class NavigationEnv(IsaacEnv):
         # drone_prim = self.drone.spawn(translations=[(0.0, 0.0, 1.0)])[0]
         drone_prim = self.drone.spawn(translations=[(0.0, 0.0, 2.0)])[0]
 
-        # lighting
+        # 灯光
         light = AssetBaseCfg(
             prim_path="/World/light",
             spawn=sim_utils.DistantLightCfg(color=(0.75, 0.75, 0.75), intensity=3000.0),
@@ -285,294 +289,31 @@ class NavigationEnv(IsaacEnv):
         light.spawn.func(light.prim_path, light.spawn, light.init_state.pos)
         sky_light.spawn.func(sky_light.prim_path, sky_light.spawn)
         
-        # Ground Plane
+        # 地平面
         cfg_ground = sim_utils.GroundPlaneCfg(color=(0.1, 0.1, 0.1), size=(300., 300.))
         cfg_ground.func("/World/defaultGroundPlane", cfg_ground, translation=(0, 0, 0.01))
 
         self.map_range = [20.0, 20.0, 4.5]
 
-        terrain_cfg = TerrainImporterCfg(
-            num_envs=self.num_envs,
-            env_spacing=0.0,
-            prim_path="/World/ground",
-            terrain_type="generator",
-            terrain_generator=TerrainGeneratorCfg(
-                seed=0,
-                size=(self.map_range[0]*2, self.map_range[1]*2), 
-                border_width=5.0,
-                num_rows=1, 
-                num_cols=1, 
-                horizontal_scale=0.1,
-                vertical_scale=0.1,
-                slope_threshold=0.75,
-                use_cache=False,
-                color_scheme="height",
-                sub_terrains={
-                    "obstacles": HfDiscreteObstaclesTerrainCfg(
-                        horizontal_scale=0.1,
-                        vertical_scale=0.1,
-                        border_width=0.0,
-                        num_obstacles=self.cfg.env.num_obstacles,
-                        obstacle_height_mode="range",
-                        obstacle_width_range=(0.4, 1.1),
-                        obstacle_height_range=[1.0, 1.5, 2.0, 4.0, 6.0],
-                        obstacle_height_probability=[0.1, 0.15, 0.20, 0.55],
-                        platform_width=0.0,
-                    ),
-                },
-            ),
-            visual_material = None,
-            max_init_terrain_level=None,
-            collision_group=-1,
-            debug_vis=True,
-        )
-        terrain_importer = TerrainImporter(terrain_cfg)
+        # --- 开始重构 ---
+        # 生成静态障碍物 (地形和横梁)
+        spawn_static_obstacles(self.cfg, self.num_envs, self.map_range)
 
-        # ==================== whole-body ====================
-        # Add horizontal beams to the terrain mesh so LiDAR can detect them
-        from pxr import UsdGeom
-        from pxr import Vt
-        
-        num_beams = int(getattr(self.cfg.env, "num_static_beams", 12))
-        beam_len_range = tuple(getattr(self.cfg.env, "beam_length_range", [2.0, 6.0]))
-        beam_thk_range = tuple(getattr(self.cfg.env, "beam_thickness_range", [0.2, 0.4]))
-        beam_z_range = tuple(getattr(self.cfg.env, "beam_height_range", [1.0, 3.0]))
-        
-        # Get the terrain mesh prim to append beam geometries
-        stage = prim_utils.get_current_stage()
-        terrain_mesh_prim_path = "/World/ground/terrain/mesh"
-        terrain_mesh_prim = UsdGeom.Mesh.Get(stage, terrain_mesh_prim_path)
-        
-        if terrain_mesh_prim:
-            # Get existing mesh data
-            existing_points = list(terrain_mesh_prim.GetPointsAttr().Get())
-            existing_face_counts = list(terrain_mesh_prim.GetFaceVertexCountsAttr().Get())
-            existing_face_indices = list(terrain_mesh_prim.GetFaceVertexIndicesAttr().Get())
-            vertex_offset = len(existing_points)
-            
-            # Generate beam meshes and append to terrain
-            beam_meshes = []
-            
-            # X-direction beams
-            for i in range(num_beams // 2 + num_beams % 2):
-                L = float(np.random.uniform(*beam_len_range))
-                T = float(np.random.uniform(*beam_thk_range))
-                z = float(np.random.uniform(*beam_z_range))
-                x = float(np.random.uniform(-self.map_range[0]+1.5, self.map_range[0]-1.5))
-                y = float(np.random.uniform(-self.map_range[1]+1.5, self.map_range[1]-1.5))
-                
-                # Create box vertices
-                lx, ly, lz = L/2, T/2, T/2
-                box_verts = np.array([
-                    [x-lx, y-ly, z-lz], [x+lx, y-ly, z-lz], [x+lx, y+ly, z-lz], [x-lx, y+ly, z-lz],
-                    [x-lx, y-ly, z+lz], [x+lx, y-ly, z+lz], [x+lx, y+ly, z+lz], [x-lx, y+ly, z+lz]
-                ])
-                beam_meshes.append((box_verts, vertex_offset))
-                vertex_offset += 8
-            
-            # Y-direction beams
-            for i in range(num_beams // 2):
-                L = float(np.random.uniform(*beam_len_range))
-                T = float(np.random.uniform(*beam_thk_range))
-                z = float(np.random.uniform(*beam_z_range))
-                x = float(np.random.uniform(-self.map_range[0]+1.5, self.map_range[0]-1.5))
-                y = float(np.random.uniform(-self.map_range[1]+1.5, self.map_range[1]-1.5))
-                
-                # Create box vertices
-                lx, ly, lz = T/2, L/2, T/2
-                box_verts = np.array([
-                    [x-lx, y-ly, z-lz], [x+lx, y-ly, z-lz], [x+lx, y+ly, z-lz], [x-lx, y+ly, z-lz],
-                    [x-lx, y-ly, z+lz], [x+lx, y-ly, z+lz], [x+lx, y+ly, z+lz], [x-lx, y+ly, z+lz]
-                ])
-                beam_meshes.append((box_verts, vertex_offset))
-                vertex_offset += 8
-            
-            # Box face topology (same for all boxes)
-            box_face_indices = [
-                0, 1, 2, 3,  # bottom
-                4, 5, 6, 7,  # top
-                0, 1, 5, 4,  # front
-                2, 3, 7, 6,  # back
-                0, 3, 7, 4,  # left
-                1, 2, 6, 5   # right
-            ]
-            
-            # Append all beam vertices and faces to the terrain mesh
-            for verts, offset in beam_meshes:
-                for vert in verts:
-                    existing_points.append(tuple(vert))
-                for idx in box_face_indices:
-                    existing_face_indices.append(offset + idx)
-                for _ in range(6):  # 6 quad faces per box
-                    existing_face_counts.append(4)
-            
-            # Update the terrain mesh with new geometry
-            terrain_mesh_prim.GetPointsAttr().Set(Vt.Vec3fArray(existing_points))
-            terrain_mesh_prim.GetFaceVertexCountsAttr().Set(existing_face_counts)
-            terrain_mesh_prim.GetFaceVertexIndicesAttr().Set(existing_face_indices)
-            
-            print(f"[Navigation Environment]: Added {num_beams} horizontal beams to terrain mesh for LiDAR detection")
-        else:
-            print(f"[WARNING]: Could not find terrain mesh at {terrain_mesh_prim_path}, beams will not be detected by LiDAR!")
-        # ==================== whole-body ====================
-
-        if (self.cfg.env_dyn.num_obstacles == 0):
-            return
-        
-        # Dynamic Obstacles
-        # NOTE: we use cuboid to represent 3D dynamic obstacles which can float in the air 
-        # and the long cylinder to represent 2D dynamic obstacles for which the drone can only pass in 2D 
-        # The width of the dynamic obstacles is divided into N_w=4 bins
-        # [[0, 0.25], [0.25, 0.50], [0.50, 0.75], [0.75, 1.0]]
-        # The height of the dynamic obstacles is divided into N_h=2 bins
-        # [[0, 0.5], [0.5, inf]] we want to distinguish 3D obstacles and 2d obstacles
-        N_w = 4 # number of width intervals between [0, 1]
-        N_h = 2 # number of height: current only support binary
-        max_obs_width = 1.0
-        self.max_obs_3d_height = 1.0
-        self.max_obs_2d_height = 5.0
-        self.dyn_obs_width_res = max_obs_width/float(N_w)
-        dyn_obs_category_num = N_w * N_h
-        self.dyn_obs_num_of_each_category = int(self.cfg.env_dyn.num_obstacles / dyn_obs_category_num)
-        self.cfg.env_dyn.num_obstacles = self.dyn_obs_num_of_each_category * dyn_obs_category_num # in case of the roundup error
+        # 生成动态障碍物
+        self.dyn_obs_manager = DynamicObstacleManager(self.cfg, self.map_range, self.device)
+        # --- 结束重构 ---
 
 
-        # Dynamic obstacle info
-        self.dyn_obs_list = []
-        self.dyn_obs_state = torch.zeros((self.cfg.env_dyn.num_obstacles, 13), dtype=torch.float, device=self.cfg.device) # 13 is based on the states from sim, we only care the first three which is position
-        self.dyn_obs_state[:, 3] = 1. # Quaternion
-        self.dyn_obs_goal = torch.zeros((self.cfg.env_dyn.num_obstacles, 3), dtype=torch.float, device=self.cfg.device)
-        self.dyn_obs_origin = torch.zeros((self.cfg.env_dyn.num_obstacles, 3), dtype=torch.float, device=self.cfg.device)
-        self.dyn_obs_vel = torch.zeros((self.cfg.env_dyn.num_obstacles, 3), dtype=torch.float, device=self.cfg.device)
-        self.dyn_obs_step_count = 0 # dynamic obstacle motion step count
-        self.dyn_obs_size = torch.zeros((self.cfg.env_dyn.num_obstacles, 3), dtype=torch.float, device=self.device) # size of dynamic obstacles
+    # 函数 move_dynamic_obstacle(self) 已被移除
+    # 其逻辑现在位于 DynamicObstacleManager.update()
 
-
-        # helper function to check pos validity for even distribution condition
-        def check_pos_validity(prev_pos_list, curr_pos, adjusted_obs_dist):
-            for prev_pos in prev_pos_list:
-                if (np.linalg.norm(curr_pos - prev_pos) <= adjusted_obs_dist):
-                    return False
-            return True            
-        
-        obs_dist = 2 * np.sqrt(self.map_range[0] * self.map_range[1] / self.cfg.env_dyn.num_obstacles) # prefered distance between each dynamic obstacle
-        curr_obs_dist = obs_dist
-        prev_pos_list = [] # for distance check
-        cuboid_category_num = cylinder_category_num = int(dyn_obs_category_num/N_h)
-        for category_idx in range(cuboid_category_num + cylinder_category_num):
-            # create all origins for 3D dynamic obstacles of this category (size)
-            for origin_idx in range(self.dyn_obs_num_of_each_category):
-                # random sample an origin until satisfy the evenly distributed condition
-                start_time = time.time()
-                while (True):
-                    ox = np.random.uniform(low=-self.map_range[0], high=self.map_range[0])
-                    oy = np.random.uniform(low=-self.map_range[1], high=self.map_range[1])
-                    if (category_idx < cuboid_category_num):
-                        oz = np.random.uniform(low=0.0, high=self.map_range[2]) 
-                    else:
-                        oz = self.max_obs_2d_height/2. # half of the height
-                    curr_pos = np.array([ox, oy])
-                    valid = check_pos_validity(prev_pos_list, curr_pos, curr_obs_dist)
-                    curr_time = time.time()
-                    if (curr_time - start_time > 0.1):
-                        curr_obs_dist *= 0.8
-                        start_time = time.time()
-                    if (valid):
-                        prev_pos_list.append(curr_pos)
-                        break
-                curr_obs_dist = obs_dist
-                origin = [ox, oy, oz]
-                self.dyn_obs_origin[origin_idx+category_idx*self.dyn_obs_num_of_each_category] = torch.tensor(origin, dtype=torch.float, device=self.cfg.device)     
-                self.dyn_obs_state[origin_idx+category_idx*self.dyn_obs_num_of_each_category, :3] = torch.tensor(origin, dtype=torch.float, device=self.cfg.device)                        
-                prim_utils.create_prim(f"/World/Origin{origin_idx+category_idx*self.dyn_obs_num_of_each_category}", "Xform", translation=origin)
-
-            # Spawn various sizes of dynamic obstacles 
-            if (category_idx < cuboid_category_num):
-                # spawn for 3D dynamic obstacles
-                obs_width = width = float(category_idx+1) * max_obs_width/float(N_w)
-                obs_height = self.max_obs_3d_height
-                cuboid_cfg = RigidObjectCfg(
-                    prim_path=f"/World/Origin{construct_input(category_idx*self.dyn_obs_num_of_each_category, (category_idx+1)*self.dyn_obs_num_of_each_category)}/Cuboid",
-                    spawn=sim_utils.CuboidCfg(
-                        size=[width, width, self.max_obs_3d_height],
-                        rigid_props=sim_utils.RigidBodyPropertiesCfg(),
-                        mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
-                        collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
-                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0), metallic=0.2),
-                    ),
-                    init_state=RigidObjectCfg.InitialStateCfg(),
-                )
-                dynamic_obstacle = RigidObject(cfg=cuboid_cfg)
-            else:
-                radius = float(category_idx-cuboid_category_num+1) * max_obs_width/float(N_w) / 2.
-                obs_width = radius * 2
-                obs_height = self.max_obs_2d_height
-                # spawn for 2D dynamic obstacles
-                cylinder_cfg = RigidObjectCfg(
-                    prim_path=f"/World/Origin{construct_input(category_idx*self.dyn_obs_num_of_each_category, (category_idx+1)*self.dyn_obs_num_of_each_category)}/Cylinder",
-                    spawn=sim_utils.CylinderCfg(
-                        radius = radius,
-                        height = self.max_obs_2d_height, 
-                        rigid_props=sim_utils.RigidBodyPropertiesCfg(),
-                        mass_props=sim_utils.MassPropertiesCfg(mass=1.0),
-                        collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
-                        visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.0, 1.0, 0.0), metallic=0.2),
-                    ),
-                    init_state=RigidObjectCfg.InitialStateCfg(),
-                )
-                dynamic_obstacle = RigidObject(cfg=cylinder_cfg)
-            self.dyn_obs_list.append(dynamic_obstacle)
-            self.dyn_obs_size[category_idx*self.dyn_obs_num_of_each_category:(category_idx+1)*self.dyn_obs_num_of_each_category] \
-                = torch.tensor([obs_width, obs_width, obs_height], dtype=torch.float, device=self.cfg.device)
-
-    def move_dynamic_obstacle(self):
-        # Step 1: Random sample new goals for required update dynamic obstacles
-        # Check whether the current dynamic obstacles need new goals
-        dyn_obs_goal_dist = torch.sqrt(torch.sum((self.dyn_obs_state[:, :3] - self.dyn_obs_goal)**2, dim=1)) if self.dyn_obs_step_count !=0 \
-            else torch.zeros(self.dyn_obs_state.size(0), device=self.cfg.device)
-        dyn_obs_new_goal_mask = dyn_obs_goal_dist < 0.5 # change to a new goal if less than the threshold
-        
-        # sample new goals in local range
-        num_new_goal = torch.sum(dyn_obs_new_goal_mask)
-        sample_x_local = -self.cfg.env_dyn.local_range[0] + 2. * self.cfg.env_dyn.local_range[0] * torch.rand(num_new_goal, 1, dtype=torch.float, device=self.cfg.device)
-        sample_y_local = -self.cfg.env_dyn.local_range[1] + 2. * self.cfg.env_dyn.local_range[1] * torch.rand(num_new_goal, 1, dtype=torch.float, device=self.cfg.device)
-        sample_z_local = -self.cfg.env_dyn.local_range[1] + 2. * self.cfg.env_dyn.local_range[2] * torch.rand(num_new_goal, 1, dtype=torch.float, device=self.cfg.device)
-        sample_goal_local = torch.cat([sample_x_local, sample_y_local, sample_z_local], dim=1)
-    
-        # apply local goal to the global range
-        self.dyn_obs_goal[dyn_obs_new_goal_mask] = self.dyn_obs_origin[dyn_obs_new_goal_mask] + sample_goal_local
-        # clamp the range if out of the static env range
-        self.dyn_obs_goal[:, 0] = torch.clamp(self.dyn_obs_goal[:, 0], min=-self.map_range[0], max=self.map_range[0])
-        self.dyn_obs_goal[:, 1] = torch.clamp(self.dyn_obs_goal[:, 1], min=-self.map_range[1], max=self.map_range[1])
-        self.dyn_obs_goal[:, 2] = torch.clamp(self.dyn_obs_goal[:, 2], min=0., max=self.map_range[2])
-        self.dyn_obs_goal[int(self.dyn_obs_goal.size(0)/2):, 2] = self.max_obs_2d_height/2. # for 2d obstacles
-
-
-        # Step 2: Random sample velocity for roughly every 2 seconds
-        if (self.dyn_obs_step_count % int(2.0/self.cfg.sim.dt) == 0):
-            self.dyn_obs_vel_norm = self.cfg.env_dyn.vel_range[0] + (self.cfg.env_dyn.vel_range[1] \
-              - self.cfg.env_dyn.vel_range[0]) * torch.rand(self.dyn_obs_vel.size(0), 1, dtype=torch.float, device=self.cfg.device)
-            self.dyn_obs_vel = self.dyn_obs_vel_norm * \
-                (self.dyn_obs_goal - self.dyn_obs_state[:, :3])/torch.norm((self.dyn_obs_goal - self.dyn_obs_state[:, :3]), dim=1, keepdim=True)
-
-        # Step 3: Calculate new position update for current timestep
-        self.dyn_obs_state[:, :3] += self.dyn_obs_vel * self.cfg.sim.dt
-
-
-        # Step 4: Update Visualized Location in Simulation
-        for category_idx, dynamic_obstacle in enumerate(self.dyn_obs_list):
-            dynamic_obstacle.write_root_state_to_sim(self.dyn_obs_state[category_idx*self.dyn_obs_num_of_each_category:(category_idx+1)*self.dyn_obs_num_of_each_category]) 
-            dynamic_obstacle.write_data_to_sim()
-            dynamic_obstacle.update(self.cfg.sim.dt)
-
-        self.dyn_obs_step_count += 1
 
     # ==================== whole-body ====================
     def _set_specs(self):
-        observation_dim = 7  # Changed from 8: 3(rpos_clipped_b) + 1(distance) + 3(vel_b)
-        num_dim_each_dyn_obs_state = 9  # Changed from 10: 3(rpos_gn) + 1(distance) + 3(vel_g) + 1(width) + 1(height)
+        observation_dim = 7  # 从 8 更改: 3(rpos_clipped_b) + 1(distance) + 3(vel_b)
+        num_dim_each_dyn_obs_state = 9  # 从 10 更改: 3(rpos_gn) + 1(distance) + 3(vel_g) + 1(width) + 1(height)
 
-        # Observation Spec
+        # 观测空间
         self.observation_spec = CompositeSpec({
             "agents": CompositeSpec({
                 "observation": CompositeSpec({
@@ -587,22 +328,22 @@ class NavigationEnv(IsaacEnv):
             }).expand(self.num_envs)
         }, shape=[self.num_envs], device=self.device)
         
-        # Action Spec
-        # Keep base env's action space as low-level motor commands; yaw control is introduced via VelController transform.
+        # 动作空间
+        # 保持基础环境的动作空间为低级电机命令；偏航控制通过 VelController 变换引入。
         self.action_spec = CompositeSpec({
             "agents": CompositeSpec({
-                "action": self.drone.action_spec, # motor command space
+                "action": self.drone.action_spec, # 电机命令空间
             })
         }).expand(self.num_envs).to(self.device)
         
-        # Reward Spec
+        # 奖励空间
         self.reward_spec = CompositeSpec({
             "agents": CompositeSpec({
                 "reward": UnboundedContinuousTensorSpec((1,))
             })
         }).expand(self.num_envs).to(self.device)
 
-        # Done Spec
+        # 完成信号空间
         self.done_spec = CompositeSpec({
             "done": DiscreteTensorSpec(2, (1,), dtype=torch.bool),
             "terminated": DiscreteTensorSpec(2, (1,), dtype=torch.bool),
@@ -629,7 +370,7 @@ class NavigationEnv(IsaacEnv):
 
     def reset_target(self, env_ids: torch.Tensor):
         if (self.training):
-            # decide which side
+            # 决定在哪一边
             masks = torch.tensor([[1., 0., 1.], [1., 0., 1.], [0., 1., 1.], [0., 1., 1.]], dtype=torch.float, device=self.device)
             shifts = torch.tensor([[0., 24., 0.], [0., -24., 0.], [24., 0., 0.], [-24., 0., 0.]], dtype=torch.float, device=self.device)
             mask_indices = np.random.randint(0, masks.size(0), size=env_ids.size(0))
@@ -637,13 +378,13 @@ class NavigationEnv(IsaacEnv):
             selected_shifts = shifts[mask_indices].unsqueeze(1)
 
 
-            # generate random positions
+            # 生成随机位置
             target_pos = 48. * torch.rand(env_ids.size(0), 1, 3, dtype=torch.float, device=self.device) + (-24.)
             heights = 0.5 + torch.rand(env_ids.size(0), dtype=torch.float, device=self.device) * (2.5 - 0.5)
             target_pos[:, 0, 2] = heights
             target_pos = target_pos * selected_masks + selected_shifts
             
-            # apply target pos
+            # 应用目标位置
             self.target_pos[env_ids] = target_pos
    
         else:
@@ -661,7 +402,7 @@ class NavigationEnv(IsaacEnv):
             selected_masks = masks[mask_indices].unsqueeze(1)
             selected_shifts = shifts[mask_indices].unsqueeze(1)
 
-            # generate random positions
+            # 生成随机位置
             pos = 48. * torch.rand(env_ids.size(0), 1, 3, dtype=torch.float, device=self.device) + (-24.)
             heights = 0.5 + torch.rand(env_ids.size(0), dtype=torch.float, device=self.device) * (2.5 - 0.5)
             pos[:, 0, 2] = heights
@@ -673,10 +414,10 @@ class NavigationEnv(IsaacEnv):
             pos[:, 0, 1] = 24.
             pos[:, 0, 2] = 2.
         
-        # Coordinate change: after reset, the drone's target direction should be changed
+        # 坐标变更：重置后，无人机的目标方向应改变
         self.target_dir[env_ids] = self.target_pos[env_ids] - pos
 
-        # Coordinate change: after reset, the drone's facing direction should face the current goal
+        # 坐标变更：重置后，无人机的朝向应面向当前目标
         rpy = torch.zeros(len(env_ids), 1, 3, device=self.device)
         diff = self.target_pos[env_ids] - pos
         facing_yaw = torch.atan2(diff[..., 1], diff[..., 0])
@@ -701,33 +442,37 @@ class NavigationEnv(IsaacEnv):
         self.drone.apply_action(actions)
 
     def _post_sim_step(self, tensordict: TensorDictBase):
-        # Detect train/eval toggles and optionally freeze/restore curriculum counter during eval
+        # 检测训练/评估切换，并在评估期间选择性地冻结/恢复课程计数器
         freeze_in_eval = bool(getattr(self.cfg.env, "curriculum_freeze_in_eval", True))
         if self.training != self._last_training_flag:
             if freeze_in_eval:
                 if not self.training:
-                    # entering eval: checkpoint current counter
+                    # 进入评估：检查点当前计数器
                     self._curriculum_step_checkpoint = self.curriculum_step
                 else:
-                    # leaving eval back to training: restore counter (discard any eval increments)
+                    # 离开评估返回训练：恢复计数器 (丢弃任何评估增量)
                     self.curriculum_step = self._curriculum_step_checkpoint
             self._last_training_flag = bool(self.training)
 
-        # advance global curriculum steps during training only
+        # 仅在训练期间推进全局课程步数
         if self.training:
             self.curriculum_step += 1
-        if (self.cfg.env_dyn.num_obstacles != 0):
-            self.move_dynamic_obstacle()
+        
+        # --- 开始重构 ---
+        # 使用管理器更新动态障碍物
+        self.dyn_obs_manager.update()
+        # --- 结束重构 ---
+
         self.lidar.update(self.dt)
     
     # ==================== whole-body ====================
     def _compute_state_and_obs(self):
         self.root_state = self.drone.get_state(env_frame=False) # (world_pos, orientation (quat), world_vel_and_angular, heading, up, 4motorsthrust)
-        self.info["drone_state"][:] = self.root_state[..., :13] # info is for controller
+        self.info["drone_state"][:] = self.root_state[..., :13] # info 用于控制器
 
-        # -----------Network Input I: LiDAR range data--------------
+        # -----------网络输入 I: LiDAR 范围数据--------------
 
-        # Step 1: Calculate distance from drone center to obstacles
+        # 步骤 1: 计算从无人机中心到障碍物的距离
         # ==================== whole-body scan ====================
         ray_distances = (
             (self.lidar.data.ray_hits_w - self.lidar.data.pos_w.unsqueeze(1))
@@ -739,151 +484,156 @@ class NavigationEnv(IsaacEnv):
         self.lidar_scan = clearance
         # ============================================================
 
-        # Optional render for LiDAR
+        # LiDAR 的可选渲染
         if self._should_render(0):
             self.debug_draw.clear()
             x = self.lidar.data.pos_w[0]
             v = (self.lidar.data.ray_hits_w[0] - x).reshape(*self.lidar_resolution, 3)
             self.debug_draw.vector(x.expand_as(v[:, 0])[0], v[0, 0])
 
-        # ---------Network Input II: Drone's internal states---------
-        # Get drone's current orientation quaternion
+        # ---------网络输入 II: 无人机内部状态---------
+        # 获取无人机当前的姿态四元数
         quat_w = self.root_state[..., 3:7]
 
-        # a. distance info in horizontal and vertical plane
+        # a. 水平和垂直平面上的距离信息
         rpos = self.target_pos - self.root_state[..., :3]        
-        distance = rpos.norm(dim=-1, keepdim=True) # start to goal distance
+        distance = rpos.norm(dim=-1, keepdim=True) # 到目标的距离
         
-        # b. unit direction vector to goal
+        # b. 指向目标的单位方向向量
         target_dir_3d = self.target_dir.clone()
 
-        rpos_clipped = rpos / distance.clamp(1e-6) # unit vector: start to goal direction
+        rpos_clipped = rpos / distance.clamp(1e-6) # 单位向量：指向目标的方向
         rpos_clipped_b = quat_rotate_inverse(quat_w, rpos_clipped)
         
-        # c. velocity in the drone's body frame
-        vel_w = self.root_state[..., 7:10] # world vel
-        vel_b = quat_rotate_inverse(quat_w, vel_w)   # coordinate change for velocity
+        # c. 无人机机身坐标系中的速度
+        vel_w = self.root_state[..., 7:10] # 世界坐标系速度
+        vel_b = quat_rotate_inverse(quat_w, vel_w)   # 速度的坐标变换
 
-        # final drone's internal states
+        # 最终的无人机内部状态
         drone_state = torch.cat([rpos_clipped_b, distance, vel_b], dim=-1).squeeze(1)
 
-        if (self.cfg.env_dyn.num_obstacles != 0):
-            # ---------Network Input III: Dynamic obstacle states--------
+        # --- 开始重构 ---
+        # 使用障碍物管理器获取信息
+        if (self.dyn_obs_manager.num_obstacles > 0):
+            # ---------网络输入 III: 动态障碍物状态--------
             # ------------------------------------------------------------
-            # a. Closest N obstacles relative position in the goal frame 
-            # Find the N closest and within range obstacles for each drone
-            dyn_obs_pos_expanded = self.dyn_obs_state[..., :3].unsqueeze(0).repeat(self.num_envs, 1, 1)
+            # a. 目标坐标系中最近的 N 个障碍物的相对位置
+            # 为每个无人机找到 N 个最近且在范围内的障碍物
+            dyn_obs_pos_expanded = self.dyn_obs_manager.dyn_obs_state[..., :3].unsqueeze(0).repeat(self.num_envs, 1, 1)
             dyn_obs_rpos_expanded = dyn_obs_pos_expanded[..., :3] - self.root_state[..., :3] 
-            dyn_obs_distance = torch.norm(dyn_obs_rpos_expanded, dim=2)  # Shape: (num_envs, num_dyn_obs)
-            _, closest_dyn_obs_idx = torch.topk(dyn_obs_distance, self.cfg.algo.feature_extractor.dyn_obs_num, dim=1, largest=False) # pick top N closest obstacle index
+            dyn_obs_distance = torch.norm(dyn_obs_rpos_expanded, dim=2)  # 形状: (num_envs, num_dyn_obs)
+            _, closest_dyn_obs_idx = torch.topk(dyn_obs_distance, self.cfg.algo.feature_extractor.dyn_obs_num, dim=1, largest=False) # 挑选最近的 N 个障碍物索引
             dyn_obs_range_mask = dyn_obs_distance.gather(1, closest_dyn_obs_idx) > self.lidar_range
 
-            # relative distance of obstacles in the drone's body frame
+            # 无人机机身坐标系中障碍物的相对距离
             closest_dyn_obs_rpos = torch.gather(dyn_obs_rpos_expanded, 1, closest_dyn_obs_idx.unsqueeze(-1).expand(-1, -1, 3))
             closest_dyn_obs_rpos_g = vec_to_new_frame(closest_dyn_obs_rpos, target_dir_3d) 
-            closest_dyn_obs_rpos_g[dyn_obs_range_mask] = 0. # exclude out of range obstacles
+            closest_dyn_obs_rpos_g[dyn_obs_range_mask] = 0. # 排除范围外的障碍物
             closest_dyn_obs_distance = closest_dyn_obs_rpos.norm(dim=-1, keepdim=True)
             closest_dyn_obs_rpos_gn = closest_dyn_obs_rpos_g / closest_dyn_obs_distance.clamp(1e-6)
 
-            # Get size of dynamic obstacles (needed for whole-body clearance computation)
-            closest_dyn_obs_size = self.dyn_obs_size[closest_dyn_obs_idx] # the actual size
+            # 获取动态障碍物的尺寸 (用于全身间隙计算)
+            closest_dyn_obs_size = self.dyn_obs_manager.dyn_obs_size[closest_dyn_obs_idx] # 实际尺寸
 
             # ==================== whole-body ====================
-            # Compute robot radial extent along the direction to each obstacle by indexing shape_scan
-            dir_vec = closest_dyn_obs_rpos / closest_dyn_obs_distance.clamp_min(1e-6)  # (N, K, 3), normalized
+            # 通过索引 shape_scan 计算机器人沿每个障碍物方向的径向范围
+            dir_vec = closest_dyn_obs_rpos / closest_dyn_obs_distance.clamp_min(1e-6)  # (N, K, 3), 归一化
             phi = torch.atan2(dir_vec[..., 1], dir_vec[..., 0])
             two_pi = torch.tensor(2.0 * np.pi, device=self.device)
             phi = torch.remainder(phi + two_pi, two_pi)
             # phi = torch.fmod(phi + two_pi, two_pi)
             H = self.lidar_hbeams
             V = self.lidar_vbeams_ext
-            # vertical angle in radians
+            # 垂直角度 (弧度)
             v_angle = torch.atan2(dir_vec[..., 2], torch.norm(dir_vec[..., :2], dim=-1))
             deg = v_angle * (180.0 / np.pi)
             vfov_min = -90.0
             vfov_max = 90.0
-            # map angles to discrete beam indices
+            # 将角度映射到离散的光束索引
             h_idx = torch.round(phi / two_pi * (H)).long() % H
             v_idx = torch.round((deg - vfov_min) / max(vfov_max - vfov_min, 1e-6) * (V - 1)).clamp(0, V - 1).long()
-            # gather per-direction robot radial distance from shape_scan
+            # 从 shape_scan 中收集每个方向的机器人径向距离
             shape_map = self.shape_scan[0].reshape(H * V)  # (H*V)
-            lin_idx = (h_idx * V + v_idx).view(-1)  # flatten to (N*K)
+            lin_idx = (h_idx * V + v_idx).view(-1)  # 展平为 (N*K)
             shape_r = shape_map[lin_idx].view(h_idx.shape)  # (N, K)
             shape_r = shape_r.unsqueeze(-1)  # (N, K, 1)
-            # Clearance to obstacle surfaces (3D, with 2D-only already encoded by z=0 for last half)
+            # 到障碍物表面的间隙 (3D, 2D-only 已通过 z=0 编码)
             width_half = (closest_dyn_obs_size[..., 0].unsqueeze(-1)) * 0.5  # (N, K, 1)
             clearance_3d = (closest_dyn_obs_distance - shape_r - width_half).clamp_min(0.0)
             
-            # Provide clearance tensor for reward below via a reserved name
+            # 通过保留名称为下面的奖励提供间隙张量
             closest_dyn_obs_clearance_reward = clearance_3d.squeeze(-1)
-            # Mask out-of-range obstacles
+            # 屏蔽范围外的障碍物
             closest_dyn_obs_clearance_reward[dyn_obs_range_mask] = self.cfg.sensor.lidar_range
             # ==================== whole-body ====================
 
-            # b. Velocity in the goal frame for the dynamic obstacles
-            closest_dyn_obs_vel = self.dyn_obs_vel[closest_dyn_obs_idx]
+            # b. 动态障碍物在目标坐标系中的速度
+            closest_dyn_obs_vel = self.dyn_obs_manager.dyn_obs_vel[closest_dyn_obs_idx]
             closest_dyn_obs_vel[dyn_obs_range_mask] = 0.
             closest_dyn_obs_vel_g = vec_to_new_frame(closest_dyn_obs_vel, target_dir_3d) 
 
-            # c. Size of dynamic obstacles in category (already defined above for whole-body clearance)
+            # c. 类别中的动态障碍物尺寸 (已在上面为全身间隙定义)
             closest_dyn_obs_width = closest_dyn_obs_size[..., 0].unsqueeze(-1)
-            closest_dyn_obs_width_category = closest_dyn_obs_width / self.dyn_obs_width_res - 1. # convert to category: [0, 1, 2, 3]
+            closest_dyn_obs_width_category = closest_dyn_obs_width / self.dyn_obs_width_res - 1. # 转换为类别: [0, 1, 2, 3]
             closest_dyn_obs_width_category[dyn_obs_range_mask] = 0.
 
             closest_dyn_obs_height = closest_dyn_obs_size[..., 2].unsqueeze(-1)
             closest_dyn_obs_height_category = torch.where(closest_dyn_obs_height > self.max_obs_3d_height, torch.tensor(0.0), closest_dyn_obs_height)
             closest_dyn_obs_height_category[dyn_obs_range_mask] = 0.
 
-            # concatenate all for dynamic obstacles
+            # 连接所有动态障碍物信息
             dyn_obs_states = torch.cat([closest_dyn_obs_rpos_gn, closest_dyn_obs_distance, closest_dyn_obs_vel_g, closest_dyn_obs_width_category, closest_dyn_obs_height_category], dim=-1).unsqueeze(1)      
         else:
             dyn_obs_states = torch.zeros(self.num_envs, 1, self.cfg.algo.feature_extractor.dyn_obs_num, 9, device=self.cfg.device)
+        # --- 结束重构 ---
             
-        # -----------------Network Input Final--------------
+        # -----------------网络输入最终----------------
         obs = {
             "state": drone_state,
             "lidar": self.lidar_scan,
             "direction": target_dir_3d,
             "dynamic_obstacle": dyn_obs_states,
             # ==================== whole-body shape scan ====================
-            "shape_scan": self.shape_scan.expand(self.num_envs, -1, -1, -1)  # Expand to batch size
+            "shape_scan": self.shape_scan.expand(self.num_envs, -1, -1, -1)  # 扩展到批次大小
             # ===============================================================
         }
 
 
-        # -----------------Reward Calculation-----------------
-        # a. safety reward for static obstacles
+        # -----------------奖励计算-----------------
+        # a. 静态障碍物的安全奖励
 
         # ==================== whole-body ====================
         safety_lambda = getattr(self.cfg.env, "safety_reward_lambda", 1.0)
         safety_k = getattr(self.cfg.env, "safety_reward_k", 0.5)
         clearance_squared = self.lidar_scan ** 2
         reward_safety_static = safety_lambda * (1.0 - torch.exp(-safety_k * clearance_squared))
-        reward_safety_static = reward_safety_static.mean(dim=(2, 3))  # Average over all rays
+        reward_safety_static = reward_safety_static.mean(dim=(2, 3))  # 对所有射线取平均
 
-        # b. safety reward for dynamic obstacles
-        if (self.cfg.env_dyn.num_obstacles != 0):
+        # b. 动态障碍物的安全奖励
+        # --- 开始重构 ---
+        if (self.dyn_obs_manager.num_obstacles > 0):
+        # --- 结束重构 ---
             clearance_dyn_squared = closest_dyn_obs_clearance_reward ** 2
             reward_safety_dynamic = safety_lambda * (1.0 - torch.exp(-safety_k * clearance_dyn_squared))
             reward_safety_dynamic = reward_safety_dynamic.mean(dim=-1, keepdim=True)
         # ==================== whole-body ====================
 
-        # c. velocity reward for goal direction
+        # c. 朝向目标方向的速度奖励
         vel_direction = rpos / distance.clamp_min(1e-6)
         reward_vel = (self.drone.vel_w[..., :3] * vel_direction).sum(-1)  # (num_envs, 1)
         
-        # d. smoothness reward for action smoothness
+        # d. 动作平滑度的平滑奖励
         penalty_smooth = (self.drone.vel_w[..., :3] - self.prev_drone_vel_w).norm(dim=-1)  # (num_envs, 1)
 
         # ==================== whole-body ====================
-        # e. Unified height reward: combines preference for optimal height and penalty for being out of bounds
-        # The optimal height is dynamically set to the goal's z-coordinate.
+        # e. 统一高度奖励：结合了对最佳高度的偏好和对越界的惩罚
+        # 最佳高度被动态设置为目标的 z 坐标。
         optimal_height = self.target_pos[:, 0, 2]  # (num_envs,)
         height_sigma = getattr(self.cfg.env, "height_reward_sigma", 0.5)
         
         drone_height = self.drone.pos[..., 2]  # (num_envs,) or (num_envs, 1)
         if drone_height.dim() > 1:
-            drone_height = drone_height.squeeze(-1)  # ensure (num_envs,)
+            drone_height = drone_height.squeeze(-1)  # 确保 (num_envs,)
         height_diff = drone_height - optimal_height  # (num_envs,)
         reward_height_pref = torch.exp(-0.5 * (height_diff / height_sigma) ** 2)  # (num_envs,)
         
@@ -893,21 +643,23 @@ class NavigationEnv(IsaacEnv):
         out_of_bounds_upper = torch.clamp(drone_height - max_h, min=0.0)  # (num_envs,)
         penalty_out_of_bounds = out_of_bounds_lower**2 + out_of_bounds_upper**2  # (num_envs,)
         
-        # Combine preference and penalty into a single height reward term
+        # 将偏好和惩罚组合成一个单一的高度奖励项
         height_reward_weight = getattr(self.cfg.env, "height_reward_weight", 1.0)
         height_penalty_weight = getattr(self.cfg.env, "height_penalty_weight", 4.0)
         reward_height = (reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight).unsqueeze(-1)  # (num_envs, 1)
         # ==================== whole-body ====================
 
 
-        # f. Collision condition with its penalty
+        # f. 碰撞条件及其惩罚
         # ==================== whole-body ====================
-        # Static collision already uses surface distance via lidar_scan
+        # 静态碰撞已通过 lidar_scan 使用表面距离
         lidar_min = einops.reduce(self.lidar_scan, "n 1 w h -> n 1", "min")
         collision_threshold = 0.1
         static_collision = (lidar_min < collision_threshold) & (self.progress_buf.unsqueeze(1) > 5)
 
-        if (self.cfg.env_dyn.num_obstacles != 0):
+        # --- 开始重构 ---
+        if (self.dyn_obs_manager.num_obstacles > 0):
+        # --- 结束重构 ---
             dynamic_collision = (closest_dyn_obs_clearance_reward.min(dim=1, keepdim=True).values < collision_threshold) & (self.progress_buf.unsqueeze(1) > 5)
         else:
             dynamic_collision = torch.zeros_like(static_collision)
@@ -917,7 +669,7 @@ class NavigationEnv(IsaacEnv):
         penalty_collision = (collision.float() * -10.0)
         
         # ==================== whole-body ====================
-        # Curriculum configuration
+        # 课程配置
         r1 = getattr(self.cfg.env, "curriculum_r1_steps", None)
         r2 = getattr(self.cfg.env, "curriculum_r2_steps", None)
         total_steps = float(getattr(self.cfg.env, "curriculum_total_steps", 1_000_000))
@@ -933,13 +685,13 @@ class NavigationEnv(IsaacEnv):
                 else:
                     p = (step_now - float(r1)) / (float(r2) - float(r1))
             else:
-                # fallback to continuous schedule
+                # 回退到连续时间表
                 effective_steps = self.curriculum_step / max(step_divisor, 1e-9)
                 p = float(min(1.0, max(0.0, effective_steps / max(total_steps, 1e-9))))
         else:
-            p = 1.0  # evaluation uses final weights (safety-focused)
+            p = 1.0  # 评估使用最终权重 (注重安全)
 
-        # Linear schedules for weights
+        # 权重的线性调度
         vel_w_start = float(getattr(self.cfg.env, "vel_weight_start", 1.5))
         vel_w_end = float(getattr(self.cfg.env, "vel_weight_end", 1.0))
         safety_w_start = float(getattr(self.cfg.env, "safety_weight_start", 0.8))
@@ -953,16 +705,18 @@ class NavigationEnv(IsaacEnv):
 
         base_bias = 0.5
 
-        # Optional curriculum logging: every N steps in training, once at start in eval
+        # 可选的课程日志记录：训练中每 N 步记录一次，评估开始时记录一次
         log_interval = int(getattr(self.cfg.env, "curriculum_log_interval", 1000))
         should_log_train = self.training and (log_interval > 0) and (self.curriculum_step % log_interval == 0)
         should_log_eval = (not self.training) and (self.progress_buf[0].item() == 0)
         if should_log_train or should_log_eval:
-            # Use effective step for display to avoid confusion during eval
+            # 使用有效步数进行显示，以避免评估期间产生混淆
             effective_step_display = (
                 self.curriculum_step if self.training else (self._curriculum_step_checkpoint if log_interval >= 0 else self.curriculum_step)
             )
-            if (self.cfg.env_dyn.num_obstacles != 0):
+            # --- 开始重构 ---
+            if (self.dyn_obs_manager.num_obstacles > 0):
+            # --- 结束重构 ---
                 logging.info(
                     f"[Curriculum] step={effective_step_display} p={p:.4f} "
                     f"w_vel={w_vel:.3f} w_safety_static={w_safety_static:.3f} "
@@ -973,11 +727,13 @@ class NavigationEnv(IsaacEnv):
                     f"[Curriculum] step={effective_step_display} p={p:.4f} "
                     f"w_vel={w_vel:.3f} w_safety={w_safety_static:.3f}"
                 )
-         # g. Reward for reaching the goal
+         # g. 到达目标的奖励
         reach_goal = (distance.squeeze(-1) < 0.5)
         reward_reach_goal = reach_goal.float() * 10.0
 
-        if (self.cfg.env_dyn.num_obstacles != 0):
+        # --- 开始重构 ---
+        if (self.dyn_obs_manager.num_obstacles > 0):
+        # --- 结束重构 ---
             self.reward = (
                 reward_vel * w_vel
                 + base_bias
@@ -1003,19 +759,19 @@ class NavigationEnv(IsaacEnv):
         # ==================== whole-body ====================
         
 
-        # Terminate Conditions
+        # 终止条件
         # reach_goal = (distance.squeeze(-1) < 0.5)
 
         below_bound = self.drone.pos[..., 2] < 0.2
         above_bound = self.drone.pos[..., 2] > 4.
         self.terminated = below_bound | above_bound | collision
         
-        self.truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1) # progress buf is to track the step number
+        self.truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1) # progress buf 用于跟踪步数
 
-        # update previous velocity for smoothness calculation in the next iteration
+        # 更新先前的速度，用于下一次迭代的平滑度计算
         self.prev_drone_vel_w = self.drone.vel_w[..., :3].clone()
 
-        # # -----------------Training Stats-----------------
+        # # -----------------训练统计-----------------
         self.stats["return"] += self.reward
         self.stats["episode_len"][:] = self.progress_buf.unsqueeze(1)
         self.stats["reach_goal"] = reach_goal.float()

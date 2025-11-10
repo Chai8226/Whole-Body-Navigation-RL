@@ -22,7 +22,7 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
     """
     在场景中生成静态地形和水平横梁。
     """
-    print("[ObstacleManager]: 正在生成静态障碍物 (地形和横梁)...")
+    print("[ObstacleManager]: Generating Static Obstacles (Terrain and Beams)...")
     terrain_cfg = TerrainImporterCfg(
         num_envs=num_envs,
         env_spacing=0.0,
@@ -153,11 +153,11 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
         terrain_mesh_prim.GetFaceVertexIndicesAttr().Set(existing_face_indices)
 
         print(
-            f"[ObstacleManager]: 已添加 {num_beams} 个水平横梁到地形网格。"
+            f"[ObstacleManager]: Added {num_beams} Beams to Terrain"
         )
     else:
         logging.warning(
-            f"在 {terrain_mesh_prim_path} 未找到地形网格, LiDAR将无法检测到横梁！"
+            f"No Terrain Mesh in {terrain_mesh_prim_path} , LiDAR will not detect beams"
         )
     # ==================== whole-body ====================
 
@@ -174,10 +174,10 @@ class DynamicObstacleManager:
         self.num_obstacles = self.cfg.env_dyn.num_obstacles
 
         if self.num_obstacles == 0:
-            print("[ObstacleManager]: 不生成动态障碍物。")
+            print("[ObstacleManager]: No Dynamic Obstacles")
             return
 
-        print(f"[ObstacleManager]: 正在生成 {self.num_obstacles} 个动态障碍物...")
+        print(f"[ObstacleManager]: Generating {self.num_obstacles} Dynamic Obstacles...")
 
         # 参数
         N_w = 4

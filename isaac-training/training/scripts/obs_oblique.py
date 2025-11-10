@@ -20,17 +20,53 @@ from utils import construct_input
 
 def spawn_static_obstacles(cfg, num_envs, map_range):
     """
-    在场景中生成静态地形（平面）以及静态的方块、圆柱和球体障碍物。
+    在场景中生成静态地形和【斜柱】。
+    (此版本将 cfg.env.num_obstacles 均分给地形障碍物和斜柱)
     """
-    print("[ObstacleManager]: Generating Static Obstacles (Surface and Sphere)...")
+    print("[ObstacleManager]: Generating Static Obstacles (terrain and oblique)...")
+
+    # --- 修改：障碍物数量分配 ---
+    # 从cfg中获取总的静态障碍物数量
+    total_static_obstacles = int(getattr(cfg.env, "num_obstacles", 24)) # 默认24个
     
-    # --- 步骤 1: 生成平坦地面 ---
+    # 将一半分配给斜柱
+    num_columns = total_static_obstacles // 2
+    
+    # 另一半（或多一个，如果是奇数）分配给地形障碍物
+    num_terrain_obstacles = total_static_obstacles - num_columns
+    print(f"[ObstacleManager]: Static Obstacles Num: {total_static_obstacles} (Terrain: {num_terrain_obstacles}, Oblique: {num_columns})")
+    # --- 修改结束 ---
+
     terrain_cfg = TerrainImporterCfg(
         num_envs=num_envs,
         env_spacing=0.0,
         prim_path="/World/ground",
-        terrain_type="plane",  # <-- 修改：使用 "plane" 替代 "generator"
-        terrain_generator=None,  # <-- 修改：移除地形生成器
+        terrain_type="generator",
+        terrain_generator=TerrainGeneratorCfg(
+            seed=0,
+            size=(map_range[0] * 2, map_range[1] * 2),
+            border_width=5.0,
+            num_rows=1,
+            num_cols=1,
+            horizontal_scale=0.1,
+            vertical_scale=0.1,
+            slope_threshold=0.75,
+            use_cache=False,
+            color_scheme="height",
+            sub_terrains={
+                "obstacles": HfDiscreteObstaclesTerrainCfg(
+                    horizontal_scale=0.1,
+                    vertical_scale=0.1,
+                    border_width=0.0,
+                    num_obstacles=num_terrain_obstacles, # <--- 使用修改后的数量
+                    obstacle_height_mode="range",
+                    obstacle_width_range=(0.4, 1.1),
+                    obstacle_height_range=[1.0, 1.5, 2.0, 4.0, 6.0],
+                    obstacle_height_probability=[0.1, 0.15, 0.20, 0.55],
+                    platform_width=0.0,
+                ),
+            },
+        ),
         visual_material=None,
         max_init_terrain_level=None,
         collision_group=-1,
@@ -38,98 +74,122 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
     )
     terrain_importer = TerrainImporter(terrain_cfg)
 
-    # --- 步骤 2: 定义要生成的静态障碍物 ---
-    num_static_cubes = int(getattr(cfg.env, "num_static_cubes", 15))
-    num_static_cylinders = int(getattr(cfg.env, "num_static_cylinders", 15))
-    num_static_spheres = int(getattr(cfg.env, "num_static_spheres", 15))
+    # ==================== whole-body (已修改为斜柱) ====================
+    # 将斜柱添加到地形网格中，以便LiDAR可以检测到它们
     
-    cube_size_range = [0.5, 2.0]
-    cylinder_height_range = [1.0, 6.0]
-    cylinder_radius_range = [0.2, 0.8]
-    sphere_radius_range = [0.5, 1.5]
-    
-    obstacle_list = []
+    # --- 使用硬编码的随机范围 ---
+    # num_columns 已在函数顶部从 cfg.env.num_obstacles 派生
+    col_len_range = (2.0, 6.0)  # 柱子长度范围
+    col_thk_range = (0.2, 0.4)  # 柱子厚度范围
+    col_base_z_range = (0.0, 0.5) # 柱子基座的高度范围
+    col_pitch_range = (0.0, 0.785) # 柱子俯仰角范围 (0-45度)
+    # --- 修改结束 ---
 
-    # --- 步骤 3: 生成静态方块 (Cubes) ---
-    for i in range(num_static_cubes):
-        x = float(np.random.uniform(-map_range[0], map_range[0]))
-        y = float(np.random.uniform(-map_range[1], map_range[1]))
-        size = float(np.random.uniform(*cube_size_range))
-        z = size / 2.0
-        
-        cube_cfg = RigidObjectCfg(
-            prim_path=f"/World/static_obstacles/cube_{i}",
-            spawn=sim_utils.CuboidCfg(
-                size=[size, size, size],
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.8, 0.8)),
-                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
-                # 修正：rigid_props 移动到 CuboidCfg 内部
-                rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    kinematic_enabled=True  
-                )
-            ),
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(x, y, z))
-            # rigid_props 已从此
+    stage = prim_utils.get_current_stage()
+    terrain_mesh_prim_path = "/World/ground/terrain/mesh"
+    terrain_mesh_prim = UsdGeom.Mesh.Get(stage, terrain_mesh_prim_path)
+
+    if num_columns == 0:
+        print("[ObstacleManager]: No Static Oblique")
+        if not terrain_mesh_prim:
+            logging.warning(
+                f"In {terrain_mesh_prim_path} No Terrain Mesh"
+            )
+        return # 直接返回，不添加斜柱
+
+    if terrain_mesh_prim:
+        existing_points = list(terrain_mesh_prim.GetPointsAttr().Get())
+        existing_face_counts = list(
+            terrain_mesh_prim.GetFaceVertexCountsAttr().Get()
         )
-        obstacle_list.append(RigidObject(cfg=cube_cfg))
-
-    # --- 步骤 4: 生成静态圆柱 (Cylinders) ---
-    for i in range(num_static_cylinders):
-        x = float(np.random.uniform(-map_range[0], map_range[0]))
-        y = float(np.random.uniform(-map_range[1], map_range[1]))
-        height = float(np.random.uniform(*cylinder_height_range))
-        radius = float(np.random.uniform(*cylinder_radius_range))
-        z = height / 2.0
-
-        cylinder_cfg = RigidObjectCfg(
-            prim_path=f"/World/static_obstacles/cylinder_{i}",
-            spawn=sim_utils.CylinderCfg(
-                radius=radius,
-                height=height,
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.8, 0.8)),
-                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
-                # 修正：rigid_props 移动到 CylinderCfg 内部
-                rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    kinematic_enabled=True 
-                )
-            ),
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(x, y, z))
-            # rigid_props 已从此
+        existing_face_indices = list(
+            terrain_mesh_prim.GetFaceVertexIndicesAttr().Get()
         )
-        obstacle_list.append(RigidObject(cfg=cylinder_cfg))
+        vertex_offset = len(existing_points)
 
-    # --- 步骤 5: 生成静态球体 (Spheres) ---
-    for i in range(num_static_spheres):
-        x = float(np.random.uniform(-map_range[0], map_range[0]))
-        y = float(np.random.uniform(-map_range[1], map_range[1]))
-        radius = float(np.random.uniform(*sphere_radius_range))
-        z = radius
+        column_meshes = []
 
-        sphere_cfg = RigidObjectCfg(
-            prim_path=f"/World/static_obstacles/sphere_{i}",
-            spawn=sim_utils.SphereCfg(
-                radius=radius,
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.8, 0.8)),
-                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
-                # 修正：rigid_props 移动到 SphereCfg 内部
-                rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    kinematic_enabled=True 
-                )
-            ),
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(x, y, z))
-            # rigid_props 已从此
+        # 生成 num_columns 个斜柱
+        for i in range(num_columns):
+            # 随机采样参数
+            L = float(np.random.uniform(*col_len_range)) # 长度
+            T = float(np.random.uniform(*col_thk_range)) # 厚度
+            z_base = float(np.random.uniform(*col_base_z_range)) # 基座 z 高度
+            
+            # 基座中心 (x, y)
+            x = float(np.random.uniform(-map_range[0] + 1.5, map_range[0] - 1.5))
+            y = float(np.random.uniform(-map_range[1] + 1.5, map_range[1] - 1.5))
+            
+            # 随机方向
+            theta_A = float(np.random.uniform(0, 2 * np.pi)) # 柱子轴的偏航角 (Yaw)
+            phi_A = float(np.random.uniform(*col_pitch_range)) # 柱子轴的俯仰角 (Pitch, 0=垂直)
+            theta_T = float(np.random.uniform(0, 2 * np.pi)) # 柱子横截面的偏航角 (Roll)
+
+            T_half = T / 2.0
+            p_base = np.array([x, y, z_base])
+
+            # 柱子轴向量 (从基座指向顶部)
+            axis_vec = np.array([
+                L * np.sin(phi_A) * np.cos(theta_A), # dX
+                L * np.sin(phi_A) * np.sin(theta_A), # dY
+                L * np.cos(phi_A)                   # dZ
+            ])
+            p_top = p_base + axis_vec
+
+            # 柱子横截面的两个正交半轴向量 (在x-y平面旋转)
+            v1_axis = np.array([ T_half * np.cos(theta_T), T_half * np.sin(theta_T), 0.0 ])
+            v2_axis = np.array([ -T_half * np.sin(theta_T), T_half * np.cos(theta_T), 0.0 ])
+
+            # 计算8个顶点
+            # 底面4个点
+            v0 = p_base - v1_axis - v2_axis
+            v1 = p_base + v1_axis - v2_axis
+            v2 = p_base + v1_axis + v2_axis
+            v3 = p_base - v1_axis + v2_axis
+            # 顶面4个点
+            v4 = p_top - v1_axis - v2_axis
+            v5 = p_top + v1_axis - v2_axis
+            v6 = p_top + v1_axis + v2_axis
+            v7 = p_top - v1_axis + v2_axis
+            
+            box_verts = np.array([v0, v1, v2, v3, v4, v5, v6, v7])
+            
+            column_meshes.append((box_verts, vertex_offset))
+            vertex_offset += 8
+
+        # 定义一个立方体的6个面（每个面4个顶点）的索引
+        box_face_indices = [
+            0, 1, 2, 3,  # bottom
+            4, 5, 6, 7,  # top
+            0, 1, 5, 4,  # front
+            2, 3, 7, 6,  # back
+            0, 3, 7, 4,  # left
+            1, 2, 6, 5,  # right
+        ]
+
+        # 将所有斜柱的顶点和面索引添加到网格数据中
+        for verts, offset in column_meshes:
+            for vert in verts:
+                existing_points.append(tuple(vert))
+            for idx in box_face_indices:
+                existing_face_indices.append(offset + idx)
+            for _ in range(6): # 6个面
+                existing_face_counts.append(4) # 每个面4个顶点
+
+        # 更新地形网格的 prim 属性
+        terrain_mesh_prim.GetPointsAttr().Set(Vt.Vec3fArray(existing_points))
+        terrain_mesh_prim.GetFaceVertexCountsAttr().Set(existing_face_counts)
+        terrain_mesh_prim.GetFaceVertexIndicesAttr().Set(existing_face_indices)
+
+        print(
+            f"[ObstacleManager]: Successfully add {num_columns} Oblique"
         )
-        obstacle_list.append(RigidObject(cfg=sphere_cfg))
-        
-    print(
-        f"[ObstacleManager]:  {len(obstacle_list)} Static Obstacles Generated"
-    )
+    else:
+        logging.warning(
+            f"在 {terrain_mesh_prim_path} No Terrain Mesh, LiDAR will not detect oblique"
+        )
+    # ==================== whole-body (修改结束) ====================
 
-    # ==================== whole-body ====================
-    #
-    #   原有的水平横梁代码已被删除
-    #
-    # ==================== whole-body ====================
 
 class DynamicObstacleManager:
     """

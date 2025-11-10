@@ -23,7 +23,7 @@ import time
 from omni_drones.utils.torch import quat_rotate_inverse
 
 # 导入新的障碍物管理器
-from obs_sphere import spawn_static_obstacles, DynamicObstacleManager
+from obs_oblique import spawn_static_obstacles, DynamicObstacleManager
 
 
 class NavigationEnv(IsaacEnv):
@@ -82,7 +82,7 @@ class NavigationEnv(IsaacEnv):
         # ==================== whole-body shape scan ====================
         # 计算机器人形状扫描：从中心到每个射线方向上最外层表面的距离
         self.shape_scan = self._compute_shape_scan(cfg.drone.marker.shape)
-        print(f"计算得到的 shape_scan 形状为: {self.shape_scan.shape}")
+        print(f"shape_scan: {self.shape_scan.shape}")
         # ==================== whole-body shape scan ====================
 
         # 起点和目标
@@ -111,7 +111,7 @@ class NavigationEnv(IsaacEnv):
         obj_file = os.path.join(obj_folder, f"{shape_name}.obj")
         
         if not os.path.exists(obj_file):
-            print(f"未找到 OBJ 文件: {obj_file}, 使用零形状扫描")
+            print(f"No OBJ file: {obj_file}")
             return torch.zeros(1, self.lidar_hbeams, self.lidar_vbeams_ext, device=self.device)
         
         # 解析 OBJ 文件以获取顶点和面
@@ -129,7 +129,7 @@ class NavigationEnv(IsaacEnv):
                     faces.append(face)
         
         if not vertices or not faces:
-            print(f"无效的 OBJ 文件: {obj_file}, 使用零形状扫描")
+            print(f"Invaild OBJ File: {obj_file}")
             return torch.zeros(1, self.lidar_hbeams, self.lidar_vbeams_ext, device=self.device)
         
         vertices = np.array(vertices)
@@ -168,7 +168,7 @@ class NavigationEnv(IsaacEnv):
         shape_scan = torch.tensor(shape_distances, dtype=torch.float32, device=self.device)
         shape_scan = shape_scan.unsqueeze(0)  # 添加批次维度: (1, H, Vext)
         
-        print(f"形状扫描统计 - 最小值: {shape_scan.min():.4f}, 最大值: {shape_scan.max():.4f}, 平均值: {shape_scan.mean():.4f}")
+        print(f"Shape Scan Statistics - Min: {shape_scan.min():.4f}, Max: {shape_scan.max():.4f}, Avg: {shape_scan.mean():.4f}")
         
         # 将 shape_scan 数据保存到文件以便可视化
         save_folder = os.path.join(os.path.dirname(__file__), "..", "shape_scan_data")
@@ -186,7 +186,7 @@ class NavigationEnv(IsaacEnv):
             horizontal_angles=horizontal_angles,
             vertical_angles=vertical_angles,
         )
-        print(f"形状扫描已保存至: {save_file}")
+        print(f"Shape Scan Saved in: {save_file}")
         
         return shape_scan
     
@@ -268,7 +268,7 @@ class NavigationEnv(IsaacEnv):
                 if hasattr(marker_cfg, "color"):
                     cfg.center_marker_color = tuple(float(v) for v in marker_cfg.color)
                 
-                print(f"启用全身可视化，使用 OBJ 文件: {cfg.center_marker_shape}.obj")
+                print(f"Enable Whole Body Visualization, Using OBJ File: {cfg.center_marker_shape}.obj")
         else:
             cfg.center_marker = False
         # ====================================================================

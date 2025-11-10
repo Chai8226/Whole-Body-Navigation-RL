@@ -70,7 +70,7 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
             spawn=sim_utils.CuboidCfg(
                 size=[size, size, size],
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.8, 0.8)),
-                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
                 # 修正：rigid_props 移动到 CuboidCfg 内部
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
                     kinematic_enabled=True  
@@ -95,7 +95,7 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
                 radius=radius,
                 height=height,
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.8, 0.8)),
-                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
                 # 修正：rigid_props 移动到 CylinderCfg 内部
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
                     kinematic_enabled=True 
@@ -119,7 +119,7 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
             spawn=sim_utils.SphereCfg(
                 radius=radius,
                 visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.8, 0.8)),
-                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=True),
+                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
                 # 修正：rigid_props 移动到 SphereCfg 内部
                 rigid_props=sim_utils.RigidBodyPropertiesCfg(
                     kinematic_enabled=True 

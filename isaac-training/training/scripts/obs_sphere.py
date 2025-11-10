@@ -20,17 +20,39 @@ from utils import construct_input
 
 def spawn_static_obstacles(cfg, num_envs, map_range):
     """
-    在场景中生成静态地形（平面）以及静态的方块、圆柱和球体障碍物。
+    在场景中生成静态地形和水平横梁。
     """
-    print("[ObstacleManager]: Generating Static Obstacles (Surface and Sphere)...")
-    
-    # --- 步骤 1: 生成平坦地面 ---
+    print("[ObstacleManager]: Generating Static Obstacles (Terrain and Beams)...")
     terrain_cfg = TerrainImporterCfg(
         num_envs=num_envs,
         env_spacing=0.0,
         prim_path="/World/ground",
-        terrain_type="plane",  # <-- 修改：使用 "plane" 替代 "generator"
-        terrain_generator=None,  # <-- 修改：移除地形生成器
+        terrain_type="generator",
+        terrain_generator=TerrainGeneratorCfg(
+            seed=0,
+            size=(map_range[0] * 2, map_range[1] * 2),
+            border_width=5.0,
+            num_rows=1,
+            num_cols=1,
+            horizontal_scale=0.1,
+            vertical_scale=0.1,
+            slope_threshold=0.75,
+            use_cache=False,
+            color_scheme="height",
+            sub_terrains={
+                "obstacles": HfDiscreteObstaclesTerrainCfg(
+                    horizontal_scale=0.1,
+                    vertical_scale=0.1,
+                    border_width=0.0,
+                    num_obstacles=cfg.env.num_obstacles,
+                    obstacle_height_mode="range",
+                    obstacle_width_range=(0.4, 1.1),
+                    obstacle_height_range=[1.0, 1.5, 2.0, 4.0, 6.0],
+                    obstacle_height_probability=[0.1, 0.15, 0.20, 0.55],
+                    platform_width=0.0,
+                ),
+            },
+        ),
         visual_material=None,
         max_init_terrain_level=None,
         collision_group=-1,
@@ -38,7 +60,9 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
     )
     terrain_importer = TerrainImporter(terrain_cfg)
 
-    # --- 步骤 2: 定义要生成的静态障碍物 ---
+# ==================== whole-body (Modified for Static Shapes) ====================
+    # 将静态障碍物添加到地形网格中，以便LiDAR可以检测到它们
+
     total_static_obstacles = int(getattr(cfg.env, "num_obstacles", 24))
     percent_static_cubes = float(getattr(cfg.env, "percent_cubes", 0.3))
     percent_static_cylinders = float(getattr(cfg.env, "percent_cylinders", 0.3))
@@ -53,92 +77,130 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
     cylinder_radius_range = tuple(getattr(cfg.env, "cylinder_radius_range", [0.2, 0.8]))
     sphere_radius_range = tuple(getattr(cfg.env, "sphere_radius_range", [0.5, 1.5]))
     clearance_range = tuple(getattr(cfg.env, "clearance_range", [0.1, 1.5]))
-    
-    obstacle_list = []
 
-    # --- 步骤 3: 生成静态方块 (Cubes) ---
-    for i in range(num_static_cubes):
-        x = float(np.random.uniform(-map_range[0], map_range[0]))
-        y = float(np.random.uniform(-map_range[1], map_range[1]))
-        size = float(np.random.uniform(*cube_size_range))
-        # z = size / 2.0
-        clearance = float(np.random.uniform(*clearance_range))
-        z = size / 2.0 + clearance
-        
-        cube_cfg = RigidObjectCfg(
-            prim_path=f"/World/static_obstacles/cube_{i}",
-            spawn=sim_utils.CuboidCfg(
-                size=[size, size, size],
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.8, 0.8)),
-                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
-                # 修正：rigid_props 移动到 CuboidCfg 内部
-                rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    kinematic_enabled=True  
-                )
-            ),
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(x, y, z))
-            # rigid_props 已从此
+    stage = prim_utils.get_current_stage()
+    terrain_mesh_prim_path = "/World/ground/terrain/mesh"
+    terrain_mesh_prim = UsdGeom.Mesh.Get(stage, terrain_mesh_prim_path)
+
+    if terrain_mesh_prim:
+        existing_points = list(terrain_mesh_prim.GetPointsAttr().Get())
+        existing_face_counts = list(
+            terrain_mesh_prim.GetFaceVertexCountsAttr().Get()
         )
-        obstacle_list.append(RigidObject(cfg=cube_cfg))
-
-    # --- 步骤 4: 生成静态圆柱 (Cylinders) ---
-    for i in range(num_static_cylinders):
-        x = float(np.random.uniform(-map_range[0], map_range[0]))
-        y = float(np.random.uniform(-map_range[1], map_range[1]))
-        height = float(np.random.uniform(*cylinder_height_range))
-        radius = float(np.random.uniform(*cylinder_radius_range))
-        z = height / 2.0
-
-        cylinder_cfg = RigidObjectCfg(
-            prim_path=f"/World/static_obstacles/cylinder_{i}",
-            spawn=sim_utils.CylinderCfg(
-                radius=radius,
-                height=height,
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.8, 0.8)),
-                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
-                # 修正：rigid_props 移动到 CylinderCfg 内部
-                rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    kinematic_enabled=True 
-                )
-            ),
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(x, y, z))
-            # rigid_props 已从此
+        existing_face_indices = list(
+            terrain_mesh_prim.GetFaceVertexIndicesAttr().Get()
         )
-        obstacle_list.append(RigidObject(cfg=cylinder_cfg))
+        vertex_offset = len(existing_points)
 
-    # --- 步骤 5: 生成静态球体 (Spheres) ---
-    for i in range(num_static_spheres):
-        x = float(np.random.uniform(-map_range[0], map_range[0]))
-        y = float(np.random.uniform(-map_range[1], map_range[1]))
-        radius = float(np.random.uniform(*sphere_radius_range))
-        clearance = float(np.random.uniform(*clearance_range))
-        z = radius + clearance
+        obstacle_meshes = []
+        total_added_obstacles = 0
 
-        sphere_cfg = RigidObjectCfg(
-            prim_path=f"/World/static_obstacles/sphere_{i}",
-            spawn=sim_utils.SphereCfg(
-                radius=radius,
-                visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.8, 0.8, 0.8)),
-                collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
-                # 修正：rigid_props 移动到 SphereCfg 内部
-                rigid_props=sim_utils.RigidBodyPropertiesCfg(
-                    kinematic_enabled=True 
-                )
-            ),
-            init_state=RigidObjectCfg.InitialStateCfg(pos=(x, y, z))
-            # rigid_props 已从此
+        # 生成 立方体 (Cubes)
+        for _ in range(num_static_cubes):
+            L = float(np.random.uniform(*cube_size_range))
+            clearance = float(np.random.uniform(*clearance_range))
+            x = float(np.random.uniform(-map_range[0] + 1.5, map_range[0] - 1.5))
+            y = float(np.random.uniform(-map_range[1] + 1.5, map_range[1] - 1.5))
+            z = (L / 2.0) + clearance  # 放置在地面上 + 间隙
+
+            lx, ly, lz = L / 2, L / 2, L / 2
+            box_verts = np.array(
+                [
+                    [x - lx, y - ly, z - lz],
+                    [x + lx, y - ly, z - lz],
+                    [x + lx, y + ly, z - lz],
+                    [x - lx, y + ly, z - lz],
+                    [x - lx, y - ly, z + lz],
+                    [x + lx, y - ly, z + lz],
+                    [x + lx, y + ly, z + lz],
+                    [x - lx, y + ly, z + lz],
+                ]
+            )
+            obstacle_meshes.append((box_verts, vertex_offset))
+            vertex_offset += 8
+            total_added_obstacles += 1
+
+        # 生成 圆柱体 (Cylinders) - 近似为长方体
+        for _ in range(num_static_cylinders):
+            R = float(np.random.uniform(*cylinder_radius_range))
+            H = float(np.random.uniform(*cylinder_height_range))
+            clearance = float(np.random.uniform(*clearance_range))
+            x = float(np.random.uniform(-map_range[0] + 1.5, map_range[0] - 1.5))
+            y = float(np.random.uniform(-map_range[1] + 1.5, map_range[1] - 1.5))
+            z = (H / 2.0) + clearance  # 放置在地面上 + 间隙
+
+            lx, ly, lz = R, R, H / 2  # 近似为 (2R x 2R x H) 的长方体
+            box_verts = np.array(
+                [
+                    [x - lx, y - ly, z - lz],
+                    [x + lx, y - ly, z - lz],
+                    [x + lx, y + ly, z - lz],
+                    [x - lx, y + ly, z - lz],
+                    [x - lx, y - ly, z + lz],
+                    [x + lx, y - ly, z + lz],
+                    [x + lx, y + ly, z + lz],
+                    [x - lx, y + ly, z + lz],
+                ]
+            )
+            obstacle_meshes.append((box_verts, vertex_offset))
+            vertex_offset += 8
+            total_added_obstacles += 1
+
+        # 生成 球体 (Spheres) - 近似为立方体
+        for _ in range(num_static_spheres):
+            R = float(np.random.uniform(*sphere_radius_range))
+            clearance = float(np.random.uniform(*clearance_range))
+            x = float(np.random.uniform(-map_range[0] + 1.5, map_range[0] - 1.5))
+            y = float(np.random.uniform(-map_range[1] + 1.5, map_range[1] - 1.5))
+            z = R + clearance  # 放置在地面上 + 间隙
+
+            lx, ly, lz = R, R, R  # 近似为 (2R x 2R x 2R) 的立方体
+            box_verts = np.array(
+                [
+                    [x - lx, y - ly, z - lz],
+                    [x + lx, y - ly, z - lz],
+                    [x + lx, y + ly, z - lz],
+                    [x - lx, y + ly, z - lz],
+                    [x - lx, y - ly, z + lz],
+                    [x + lx, y - ly, z + lz],
+                    [x + lx, y + ly, z + lz],
+                    [x - lx, y + ly, z + lz],
+                ]
+            )
+            obstacle_meshes.append((box_verts, vertex_offset))
+            vertex_offset += 8
+            total_added_obstacles += 1
+
+        box_face_indices = [
+            0, 1, 2, 3,  # bottom
+            4, 5, 6, 7,  # top
+            0, 1, 5, 4,  # front
+            2, 3, 7, 6,  # back
+            0, 3, 7, 4,  # left
+            1, 2, 6, 5,  # right
+        ]
+
+        for verts, offset in obstacle_meshes:
+            for vert in verts:
+                existing_points.append(tuple(vert))
+            for idx in box_face_indices:
+                existing_face_indices.append(offset + idx)
+            for _ in range(6):
+                existing_face_counts.append(4)
+
+        terrain_mesh_prim.GetPointsAttr().Set(Vt.Vec3fArray(existing_points))
+        terrain_mesh_prim.GetFaceVertexCountsAttr().Set(existing_face_counts)
+        terrain_mesh_prim.GetFaceVertexIndicesAttr().Set(existing_face_indices)
+
+        print(
+            f"[ObstacleManager]: Added {total_added_obstacles} Static Obstacles (approximated as boxes) to Terrain Mesh"
         )
-        obstacle_list.append(RigidObject(cfg=sphere_cfg))
-        
-    print(
-        f"[ObstacleManager]:  {len(obstacle_list)} Static Obstacles Generated"
-    )
+    else:
+        logging.warning(
+            f"No Terrain Mesh in {terrain_mesh_prim_path} , LiDAR will not detect static obstacles"
+        )
+    # ==================== (End of Modification) ====================
 
-    # ==================== whole-body ====================
-    #
-    #   原有的水平横梁代码已被删除
-    #
-    # ==================== whole-body ====================
 
 class DynamicObstacleManager:
     """

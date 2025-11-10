@@ -28,9 +28,12 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
     # --- 修改：障碍物数量分配 ---
     # 从cfg中获取总的静态障碍物数量
     total_static_obstacles = int(getattr(cfg.env, "num_obstacles", 24)) # 默认24个
+    percent_static_oblique = float(getattr(cfg.env, "percent_oblique", 0.3))
+
     
     # 将一半分配给斜柱
-    num_columns = total_static_obstacles // 2
+    num_columns = int(percent_static_oblique * total_static_obstacles)
+    # num_columns = total_static_obstacles // 2
     
     # 另一半（或多一个，如果是奇数）分配给地形障碍物
     num_terrain_obstacles = total_static_obstacles - num_columns

@@ -33,12 +33,24 @@ env:
   safety_reward_k: 0.5           # Decay rate: larger k = faster saturation
 
   reach_goal_weight: 10.0
+
+  # Switch Maps(obs_sphere, obs_vanilla, obs_oblique)
+  map_name: "obs_sphere"
   
   # Static horizontal beams configuration
   num_static_beams: 40              # Number of horizontal beams
   beam_length_range: [1.0, 8.0]    # Beam length range (m)
   beam_thickness_range: [0.3, 0.8]  # Beam thickness range (m)
   beam_height_range: [0.3, 5.0]     # Beam height above ground (m)
+
+  # Sphere Map Obstacles Num (Percentage)
+  percent_cubes: 0.2
+  percent_cylinders: 0.4
+  percent_spheres: 0.4
+
+  # Oblique Map Obstacles Num (Percentage)
+  percent_oblique: 0.5
+
   # ==================== whole-body ====================
 
   # ==================== whole-body curriculum (reward weights) ====================

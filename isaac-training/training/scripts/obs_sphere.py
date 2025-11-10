@@ -39,9 +39,14 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
     terrain_importer = TerrainImporter(terrain_cfg)
 
     # --- 步骤 2: 定义要生成的静态障碍物 ---
-    num_static_cubes = int(getattr(cfg.env, "num_static_cubes", 15))
-    num_static_cylinders = int(getattr(cfg.env, "num_static_cylinders", 15))
-    num_static_spheres = int(getattr(cfg.env, "num_static_spheres", 15))
+    total_static_obstacles = int(getattr(cfg.env, "num_obstacles", 24))
+    percent_static_cubes = float(getattr(cfg.env, "percent_cubes", 0.3))
+    percent_static_cylinders = float(getattr(cfg.env, "percent_cylinders", 0.3))
+    percent_static_spheres = float(getattr(cfg.env, "percent_spheres", 0.3))
+
+    num_static_cubes = int(percent_static_cubes * total_static_obstacles)
+    num_static_cylinders = int(percent_static_cylinders * total_static_obstacles)
+    num_static_spheres = int(percent_static_spheres * total_static_obstacles)
     
     cube_size_range = [0.5, 2.0]
     cylinder_height_range = [1.0, 6.0]

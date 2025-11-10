@@ -21,9 +21,11 @@ import omni.isaac.orbit.utils.math as math_utils
 import time
 # 为基于形状的动态障碍物处理添加机身坐标系旋转工具
 from omni_drones.utils.torch import quat_rotate_inverse
+import importlib
 
-# 导入新的障碍物管理器
-from obs_oblique import spawn_static_obstacles, DynamicObstacleManager
+
+from obs_sphere import spawn_static_obstacles, DynamicObstacleManager
+
 
 
 class NavigationEnv(IsaacEnv):
@@ -52,8 +54,25 @@ class NavigationEnv(IsaacEnv):
         )
         self.lidar_vbeams_ext = self.lidar_vbeams + 2
 
-        super().__init__(cfg, cfg.headless)
+
+        # # === 在这里添加动态导入代码 ===
+        # # 从 cfg (train.yaml) 获取模块名称, 默认为 'obs_oblique'
+        # obstacle_module_name = str(getattr(self.cfg.env, "obstacle_module", "obs_oblique"))
+        # print(f"[Navigation Environment]: Loading Map: {obstacle_module_name}")
         
+        # try:
+        #     # 动态导入指定的模块
+        #     obs_module = importlib.import_module(obstacle_module_name)
+        # except ImportError as e:
+        #     logging.error(f"Error: Can not load Map '{obstacle_module_name}'. Back to 'obs_vanilla'. Error: {e}")
+        #     import obs_vanilla as obs_module # 导入默认模块作为后备
+        
+        # # 将导入的函数和类存储在 'self' 上，以便在其他方法中使用
+        # self.spawn_static_obstacles = obs_module.spawn_static_obstacles
+        # self.DynamicObstacleManager = obs_module.DynamicObstacleManager
+        
+        super().__init__(cfg, cfg.headless)
+
         # 无人机初始化
         self.drone.initialize()
         self.init_vels = torch.zeros_like(self.drone.get_velocities())

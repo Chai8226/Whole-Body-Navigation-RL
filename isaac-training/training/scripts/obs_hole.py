@@ -24,7 +24,7 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
     """
     percent_walls = float(getattr(cfg.env, "percent_hole", 0.5))
 
-    print("[ObstacleManager]: 正在生成静态障碍物 (地形和带孔墙体)...")
+    print("[ObstacleManager]: Generating Obstacles (Walls with Holes)...")
     terrain_cfg = TerrainImporterCfg(
         num_envs=num_envs,
         env_spacing=0.0,

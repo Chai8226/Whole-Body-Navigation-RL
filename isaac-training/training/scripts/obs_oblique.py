@@ -80,13 +80,11 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
     # ==================== whole-body (已修改为斜柱) ====================
     # 将斜柱添加到地形网格中，以便LiDAR可以检测到它们
     
-    # --- 使用硬编码的随机范围 ---
-    # num_columns 已在函数顶部从 cfg.env.num_obstacles 派生
-    col_len_range = (2.0, 6.0)  # 柱子长度范围
-    col_thk_range = (0.2, 0.4)  # 柱子厚度范围
-    col_base_z_range = (0.0, 0.5) # 柱子基座的高度范围
-    col_pitch_range = (0.0, 0.785) # 柱子俯仰角范围 (0-45度)
-    # --- 修改结束 ---
+    col_len_range = tuple(getattr(cfg.env, "col_length_range", [2.0, 6.0]))  # Column length range
+    col_thk_range = tuple(getattr(cfg.env, "col_thickness_range", [0.2, 0.4]))  # Column thickness range
+    col_base_z_range = tuple(getattr(cfg.env, "col_base_z_range", [0.0, 0.5])) # Column base height range
+    col_pitch_range = tuple(getattr(cfg.env, "col_pitch_range", [0.0, 0.785])) # Column pitch angle range (0-45 deg)
+    # --- End modification ---
 
     stage = prim_utils.get_current_stage()
     terrain_mesh_prim_path = "/World/ground/terrain/mesh"

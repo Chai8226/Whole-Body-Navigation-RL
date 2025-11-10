@@ -115,17 +115,7 @@ class NavigationEnv(IsaacEnv):
 
     # ==================== whole-body ====================
     def _compute_shape_scan(self, shape_name):
-        """
-        计算从机器人中心到每个射线方向上最外层表面的距离。
-        这将创建一个与 lidar_scan 具有相同维度的形状扫描。
-        返回每个射线方向上的最大距离，以表示机器人的外部边界。
-        
-        Args:
-            shape_name: OBJ 文件名 (不带 .obj 扩展名)
-            
-        Returns:
-            torch.Tensor: 形状扫描，维度为 (1, lidar_hbeams, lidar_vbeams_ext)
-        """
+
         obj_folder = os.path.join(os.path.dirname(__file__), "..", "obj")
         obj_file = os.path.join(obj_folder, f"{shape_name}.obj")
         

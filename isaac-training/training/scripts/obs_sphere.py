@@ -48,11 +48,11 @@ def spawn_static_obstacles(cfg, num_envs, map_range):
     num_static_cylinders = int(percent_static_cylinders * total_static_obstacles)
     num_static_spheres = int(percent_static_spheres * total_static_obstacles)
     
-    cube_size_range = [0.5, 2.0]
-    cylinder_height_range = [1.0, 6.0]
-    cylinder_radius_range = [0.2, 0.8]
-    sphere_radius_range = [0.5, 1.5]
-    clearance_range = (0.1, 1.5)
+    cube_size_range = tuple(getattr(cfg.env, "cube_size_range", [0.5, 2.0]))
+    cylinder_height_range = tuple(getattr(cfg.env, "cylinder_height_range", [1.0, 6.0]))
+    cylinder_radius_range = tuple(getattr(cfg.env, "cylinder_radius_range", [0.2, 0.8]))
+    sphere_radius_range = tuple(getattr(cfg.env, "sphere_radius_range", [0.5, 1.5]))
+    clearance_range = tuple(getattr(cfg.env, "clearance_range", [0.1, 1.5]))
     
     obstacle_list = []
 

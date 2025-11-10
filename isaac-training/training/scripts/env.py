@@ -24,7 +24,7 @@ from omni_drones.utils.torch import quat_rotate_inverse
 import importlib
 
 
-from obs_sphere import spawn_static_obstacles, DynamicObstacleManager
+from obs_hole import spawn_static_obstacles, DynamicObstacleManager
 
 
 
@@ -38,7 +38,7 @@ class NavigationEnv(IsaacEnv):
     # 5. _compute_reward_and_done (更新奖励并计算回报)
     
     def __init__(self, cfg):
-        print("[Navigation Environment]: 正在初始化环境...")
+        print("[Navigation Environment]: Init Environment...")
         # LiDAR 参数:
         self.lidar_range = cfg.sensor.lidar_range
         self.lidar_vfov = (max(-89., cfg.sensor.lidar_vfov[0]), min(89., cfg.sensor.lidar_vfov[1]))
@@ -761,8 +761,8 @@ class NavigationEnv(IsaacEnv):
                 - penalty_smooth * 0.1
                 # - penalty_height * height_penalty_weight
                 + reward_height 
-                + reward_reach_goal
-                + penalty_collision
+                # + reward_reach_goal
+                # + penalty_collision
             )
         else:
             self.reward = (
@@ -772,8 +772,8 @@ class NavigationEnv(IsaacEnv):
                 - penalty_smooth * 0.1
                 # - penalty_height * height_penalty_weight
                 + reward_height 
-                + reward_reach_goal
-                + penalty_collision
+                # + reward_reach_goal
+                # + penalty_collision
             )
         # ==================== whole-body ====================
         

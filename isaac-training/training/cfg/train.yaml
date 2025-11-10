@@ -51,6 +51,10 @@ env:
   # Oblique Map Obstacles Num (Percentage)
   percent_oblique: 0.5
 
+  # Hole Map Obstacles Num (Percentage)
+  percent_hole: 0.2
+
+
   # ==================== whole-body ====================
 
   # ==================== whole-body curriculum (reward weights) ====================

@@ -23,13 +23,6 @@ import importlib
 
 
 class NavigationEnv(IsaacEnv):
-
-    # 在一个步骤中:
-    # 1. _pre_sim_step (应用动作) -> 步进 isaac sim
-    # 2. _post_sim_step (更新 lidar)
-    # 3. 增加 progress_buf
-    # 4. _compute_state_and_obs (获取观测和状态, 更新统计数据)
-    # 5. _compute_reward_and_done (更新奖励并计算回报)
     
     def __init__(self, cfg):
         print("[Navigation Environment]: Init Environment...")
@@ -266,9 +259,7 @@ class NavigationEnv(IsaacEnv):
                     "lidar": UnboundedContinuousTensorSpec((1, self.lidar_hbeams, self.lidar_vbeams_ext), device=self.device),
                     "direction": UnboundedContinuousTensorSpec((1, 3), device=self.device),
                     "dynamic_obstacle": UnboundedContinuousTensorSpec((1, self.cfg.algo.feature_extractor.dyn_obs_num, num_dim_each_dyn_obs_state), device=self.device),
-                    # ==================== whole-body ====================
-                    "shape_scan": UnboundedContinuousTensorSpec((1, self.lidar_hbeams, self.lidar_vbeams_ext), device=self.device),
-                    # ====================================================
+                    # "shape_scan": UnboundedContinuousTensorSpec((1, self.lidar_hbeams, self.lidar_vbeams_ext), device=self.device),
                 }),
             }).expand(self.num_envs)
         }, shape=[self.num_envs], device=self.device)
@@ -501,7 +492,7 @@ class NavigationEnv(IsaacEnv):
             "lidar": self.lidar_scan,
             "direction": target_dir_3d,
             "dynamic_obstacle": dyn_obs_states,
-            "shape_scan": self.shape_scan.expand(self.num_envs, -1, -1, -1)
+            # "shape_scan": self.shape_scan.expand(self.num_envs, -1, -1, -1)
         }
 
 

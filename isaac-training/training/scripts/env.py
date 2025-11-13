@@ -372,6 +372,15 @@ class NavigationEnv(IsaacEnv):
             "reach_goal": UnboundedContinuousTensorSpec(1),
             "collision": UnboundedContinuousTensorSpec(1),
             "truncated": UnboundedContinuousTensorSpec(1),
+            # wandb visualization for rewards
+            "ep_reward_vel": UnboundedContinuousTensorSpec(1),
+            "ep_reward_safety_static": UnboundedContinuousTensorSpec(1),
+            "ep_reward_safety_dynamic": UnboundedContinuousTensorSpec(1),
+            "ep_reward_height": UnboundedContinuousTensorSpec(1),
+            "ep_penalty_smooth": UnboundedContinuousTensorSpec(1),
+            "ep_bias": UnboundedContinuousTensorSpec(1),
+            "ep_reward_reach_goal": UnboundedContinuousTensorSpec(1),
+            "ep_penalty_collision": UnboundedContinuousTensorSpec(1),
         }).expand(self.num_envs).to(self.device)
 
         info_spec = CompositeSpec({
@@ -623,7 +632,8 @@ class NavigationEnv(IsaacEnv):
         clearance_squared = self.lidar_scan ** 2
         reward_safety_static = safety_lambda * (1.0 - torch.exp(-safety_k * clearance_squared))
         reward_safety_static = reward_safety_static.mean(dim=(2, 3))  # 对所有射线取平均
-
+        # wandb visualization for rewards
+        reward_safety_dynamic = torch.zeros_like(reward_safety_static)
         # b. 动态障碍物的安全奖励
         # --- 开始重构 ---
         if (self.dyn_obs_manager.num_obstacles > 0):
@@ -661,7 +671,9 @@ class NavigationEnv(IsaacEnv):
         # 将偏好和惩罚组合成一个单一的高度奖励项
         height_reward_weight = getattr(self.cfg.env, "height_reward_weight", 1.0)
         height_penalty_weight = getattr(self.cfg.env, "height_penalty_weight", 4.0)
-        reward_height = (reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight).unsqueeze(-1)  # (num_envs, 1)
+        # reward_height = (reward_height_pref * height_reward_weight - penalty_out_of_bounds * height_penalty_weight).unsqueeze(-1)  # (num_envs, 1)
+        reward_height = (- penalty_out_of_bounds * height_penalty_weight).unsqueeze(-1)  # (num_envs, 1)
+
         # ==================== whole-body ====================
 
 
@@ -746,27 +758,34 @@ class NavigationEnv(IsaacEnv):
         reach_goal = (distance.squeeze(-1) < 0.5)
         reward_reach_goal = reach_goal.float() * 10.0
 
+        r_vel = reward_vel * w_vel
+        r_bias = torch.full_like(r_vel, base_bias)
+        r_safety_static = reward_safety_static * w_safety_static
+        r_penalty_smooth = -penalty_smooth * 0.1
+
         # --- 开始重构 ---
         if (self.dyn_obs_manager.num_obstacles > 0):
+            r_safety_dynamic = reward_safety_dynamic * w_safety_dynamic
         # --- 结束重构 ---
             self.reward = (
-                reward_vel * w_vel
+                r_vel
                 + base_bias
-                + reward_safety_static * w_safety_static
-                + reward_safety_dynamic * w_safety_dynamic
-                - penalty_smooth * 0.1
-                # - penalty_height * height_penalty_weight
+                + r_safety_static
+                + r_safety_dynamic
+                + r_penalty_smooth
+                # - penalty_out_of_bounds * height_penalty_weight
                 + reward_height 
                 # + reward_reach_goal
                 # + penalty_collision
             )
         else:
+            r_safety_dynamic = torch.zeros_like(r_vel)
             self.reward = (
-                reward_vel * w_vel
+                r_vel
                 + base_bias
-                + reward_safety_static * w_safety_static
-                - penalty_smooth * 0.1
-                # - penalty_height * height_penalty_weight
+                + r_safety_static
+                + r_penalty_smooth
+                # - penalty_out_of_bounds * height_penalty_weight
                 + reward_height 
                 # + reward_reach_goal
                 # + penalty_collision
@@ -792,6 +811,15 @@ class NavigationEnv(IsaacEnv):
         self.stats["reach_goal"] = reach_goal.float()
         self.stats["collision"] = collision.float()
         self.stats["truncated"] = self.truncated.float()
+        # wandb visualization for rewards
+        self.stats["ep_reward_vel"] += r_vel
+        self.stats["ep_reward_safety_static"] += r_safety_static
+        self.stats["ep_reward_safety_dynamic"] += r_safety_dynamic
+        self.stats["ep_reward_height"] += reward_height
+        self.stats["ep_penalty_smooth"] += r_penalty_smooth
+        self.stats["ep_bias"] += r_bias
+        self.stats["ep_reward_reach_goal"] += reward_reach_goal
+        self.stats["ep_penalty_collision"] += penalty_collision
 
         return TensorDict({
             "agents": TensorDict(

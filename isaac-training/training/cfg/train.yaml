@@ -35,7 +35,7 @@ env:
   reach_goal_weight: 10.0
 
   # Switch Maps(sphere, vanilla, oblique, hole)
-  map_name: "sphere"
+  map_name: "vanilla"
   
   # Static horizontal beams configuration
   num_static_beams: 40              # Number of horizontal beams
@@ -93,9 +93,9 @@ env:
   # Linear schedules for weights: w = start + (end - start) * p
   vel_weight_start: 3.0
   vel_weight_end: 1.5
-  safety_weight_start: 0.5
+  safety_weight_start: 1.0
   safety_weight_end: 1.0
-  safety_dyn_weight_start: 0.5   # if dynamic obstacles enabled; defaults to safety_weight_* if absent
+  safety_dyn_weight_start: 1.0   # if dynamic obstacles enabled; defaults to safety_weight_* if absent
   safety_dyn_weight_end: 1.0
   curriculum_log_interval: 1000   # Log p and weights every N steps during training (<=0 disables)
   curriculum_freeze_in_eval: true  # Do not advance curriculum_step during evaluation episodes

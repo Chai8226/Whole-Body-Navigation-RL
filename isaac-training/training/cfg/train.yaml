@@ -26,7 +26,7 @@ env:
   max_flight_height: 4.0         # Maximum allowed flight height (m)
   safety_reward_k: 0.4           # Decay rate: larger k = faster saturation
   smoothness_weight: 0.1         # Weight for the smoothness penalty term
-  reward_bias: 0.2               # Constant reward bias to encourage exploration
+  reward_bias: 0.1               # Constant reward bias to encourage exploration
 
   #  whole-body curriculum
   curriculum_total_steps: 1_000_000   
@@ -34,8 +34,8 @@ env:
   curriculum_r1_steps: 10000       
   curriculum_r2_steps: 50000    
 
-  vel_weight_start: 3.0
-  vel_weight_end: 3.0
+  vel_weight_start: 2.0
+  vel_weight_end: 2.0
   safety_weight_start: 1.0
   safety_weight_end: 1.0
   safety_dyn_weight_start: 1.0  

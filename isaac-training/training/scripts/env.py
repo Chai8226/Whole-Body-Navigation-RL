@@ -572,6 +572,7 @@ class NavigationEnv(IsaacEnv):
         safety_dyn_w_end = float(getattr(self.cfg.env, "safety_dyn_weight_end", safety_w_end))
         w_smoothe = float(getattr(self.cfg.env, "smoothness_weight", 0.1))
         r_bias = float(getattr(self.cfg.env, "reward_bias", 0.2))
+        reach_goal_reward = float(getattr(self.cfg.env, "reach_goal_reward", 10.0))
 
         w_vel = vel_w_start + (vel_w_end - vel_w_start) * p
         w_safety_static = safety_w_start + (safety_w_end - safety_w_start) * p

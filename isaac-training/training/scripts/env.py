@@ -573,6 +573,8 @@ class NavigationEnv(IsaacEnv):
         w_smoothe = float(getattr(self.cfg.env, "smoothness_weight", 0.1))
         r_bias = float(getattr(self.cfg.env, "reward_bias", 0.2))
         reach_goal_reward = float(getattr(self.cfg.env, "reach_goal_reward", 10.0))
+        collision_penalty = float(getattr(self.cfg.env, "collision_penalty", 100.0))
+        
 
         w_vel = vel_w_start + (vel_w_end - vel_w_start) * p
         w_safety_static = safety_w_start + (safety_w_end - safety_w_start) * p
@@ -624,6 +626,8 @@ class NavigationEnv(IsaacEnv):
 
         terminal_goal_reward = reach_goal_reward
         self.reward = self.reward + (reach_goal.float() * terminal_goal_reward)
+
+        self.reward = self.reward - (collision.float() * collision_penalty)
         
         below_bound = self.drone.pos[..., 2] < 0.2
         above_bound = self.drone.pos[..., 2] > 4.

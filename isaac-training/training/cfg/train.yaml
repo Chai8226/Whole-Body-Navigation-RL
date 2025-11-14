@@ -34,8 +34,8 @@ env:
   curriculum_r1_steps: 10000       
   curriculum_r2_steps: 50000    
 
-  vel_weight_start: 2.0
-  vel_weight_end: 2.0
+  vel_weight_start: 1.5
+  vel_weight_end: 1.5
   safety_weight_start: 1.0
   safety_weight_end: 1.0
   safety_dyn_weight_start: 1.0  

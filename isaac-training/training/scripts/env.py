@@ -622,12 +622,12 @@ class NavigationEnv(IsaacEnv):
         # 终止条件
         reach_goal = (distance.squeeze(-1) < 0.5)
 
-        terminal_goal_reward = 10.0
+        terminal_goal_reward = reach_goal_reward
         self.reward = self.reward + (reach_goal.float() * terminal_goal_reward)
         
         below_bound = self.drone.pos[..., 2] < 0.2
         above_bound = self.drone.pos[..., 2] > 4.
-        self.terminated = below_bound | above_bound | collision
+        self.terminated = below_bound | above_bound | collision | reach_goal
         self.truncated = (self.progress_buf >= self.max_episode_length).unsqueeze(-1)
         self.prev_drone_vel_w = self.drone.vel_w[..., :3].clone()
 

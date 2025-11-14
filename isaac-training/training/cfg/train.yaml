@@ -22,11 +22,11 @@ env:
 
   # ==================== whole-body reward ====================
   height_penalty_weight: 8.0     # Weight for the height penalty term
-  min_flight_height: 0.3         # Minimum allowed flight height (m)
-  max_flight_height: 4.0         # Maximum allowed flight height (m)
+  min_flight_height: 0.5         # Minimum allowed flight height (m)
+  max_flight_height: 3.5         # Maximum allowed flight height (m)
   safety_reward_k: 0.4           # Decay rate: larger k = faster saturation
   smoothness_weight: 0.1         # Weight for the smoothness penalty term
-  reward_bias: 0.1               # Constant reward bias to encourage exploration
+  reward_bias: -0.01             # Constant reward bias to encourage exploration
 
   #  whole-body curriculum
   curriculum_total_steps: 1_000_000   

@@ -621,7 +621,7 @@ class NavigationEnv(IsaacEnv):
         # 终止条件
         reach_goal = (distance.squeeze(-1) < 0.5)
 
-        terminal_goal_reward = 50.0
+        terminal_goal_reward = 10.0
         self.reward = self.reward + (reach_goal.float() * terminal_goal_reward).unsqueeze(-1)
         
         below_bound = self.drone.pos[..., 2] < 0.2

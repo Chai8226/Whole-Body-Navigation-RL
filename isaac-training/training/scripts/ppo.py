@@ -15,9 +15,8 @@ class PPO(TensorDictModuleBase):
         super().__init__()
         self.cfg = cfg
         self.device = device
-
         
-        # Feature extractor for LiDAR (+ shape_scan stacked as 2nd channel)
+        # Feature extractor for LiDAR (clearance scan)
         feature_extractor_network = nn.Sequential(
             nn.LazyConv2d(out_channels=4, kernel_size=[5, 3], padding=[2, 1]), nn.ELU(), 
             nn.LazyConv2d(out_channels=16, kernel_size=[5, 3], stride=[2, 1], padding=[2, 1]), nn.ELU(),
@@ -34,18 +33,13 @@ class PPO(TensorDictModuleBase):
 
         # Feature extractor
         self.feature_extractor = TensorDictSequential(
-            # Stack lidar (surface-to-obstacle) and shape_scan (center-to-surface) along channel dim -> 2-channel image
-            CatTensors([
-                ("agents", "observation", "lidar"),
-                ("agents", "observation", "shape_scan"),
-            ], "_lidar_2ch", dim=1, del_keys=False),
-            TensorDictModule(feature_extractor_network, ["_lidar_2ch"], ["_cnn_feature"]),
+            TensorDictModule(feature_extractor_network, [("agents", "observation", "lidar")], ["_cnn_feature"]),
             TensorDictModule(dynamic_obstacle_network, [("agents", "observation", "dynamic_obstacle")], ["_dynamic_obstacle_feature"]),
             CatTensors(["_cnn_feature", ("agents", "observation", "state"), "_dynamic_obstacle_feature"], "_feature", del_keys=False), 
             TensorDictModule(make_mlp([256, 256]), ["_feature"], ["_feature"]),
         ).to(self.device)
 
-        # Actor etwork
+        # Actor network
         self.n_agents, self.action_dim = action_spec.shape
         self.actor = ProbabilisticActor(
             TensorDictModule(BetaActor(self.action_dim), ["_feature"], ["alpha", "beta"]),
@@ -85,28 +79,15 @@ class PPO(TensorDictModuleBase):
         self.actor.apply(init_)
         self.critic.apply(init_)
 
-    # ==================== whole-body shape scan ====================
     def __call__(self, tensordict):
         self.feature_extractor(tensordict)
         self.actor(tensordict)
         self.critic(tensordict)
-        # Coordinate change: only transform the first 3 dims (spatial) to world frame; keep yaw (last dim) as-is
+
         actions = (2 * tensordict["agents", "action_normalized"] * self.cfg.actor.action_limit) - self.cfg.actor.action_limit
-        if actions.shape[-1] >= 4:
-            base_local = actions[..., :3]
-            yaw_local = actions[..., 3:4]
-            base_world = vec_to_world(base_local, tensordict["agents", "observation", "direction"])
-            # Ensure both tensors have the same number of dimensions
-            if base_world.dim() == 3 and yaw_local.dim() == 2:
-                yaw_local = yaw_local.unsqueeze(-1)  # Add dimension to match base_world
-            elif base_world.dim() == 2 and yaw_local.dim() == 3:
-                base_world = base_world.unsqueeze(-1)  # Add dimension to match yaw_local
-            actions_world = torch.cat([base_world, yaw_local], dim=-1)
-        else:
-            actions_world = vec_to_world(actions, tensordict["agents", "observation", "direction"])
+        actions_world = vec_to_world(actions, tensordict["agents", "observation", "direction"])
         tensordict["agents", "action"] = actions_world
         return tensordict
-    # ==================== whole-body shape scan ====================
 
     def train(self, tensordict):
         # tensordict: (num_env, num_frames, dim), batchsize = num_env * num_frames
